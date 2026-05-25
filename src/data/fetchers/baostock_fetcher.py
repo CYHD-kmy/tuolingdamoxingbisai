@@ -1,0 +1,147 @@
+"""
+BaoStock 数据适配器 — 兜底免费数据源。
+
+特点: 完全免费、无需Token、稳定可靠
+局限: 数据更新有延迟(通常T+1)、无实时行情、无资金流向
+
+文档: http://baostock.com
+"""
+
+import logging
+from datetime import datetime, timedelta
+from typing import Optional
+
+from .akshare_fetcher import StockDaily, RealtimeQuote
+
+logger = logging.getLogger(__name__)
+
+
+class BaoStockFetcher:
+    """BaoStock 数据适配器。完全免费，无需 Token。"""
+
+    name = "baostock"
+
+    _logged_in = False
+
+    @classmethod
+    def _ensure_login(cls):
+        if cls._logged_in:
+            return
+        import baostock as bs
+        lg = bs.login()
+        if lg.error_code != "0":
+            logger.warning("baostock 登录失败: %s", lg.error_msg)
+            return
+        cls._logged_in = True
+
+    @classmethod
+    def _logout(cls):
+        if not cls._logged_in:
+            return
+        import baostock as bs
+        bs.logout()
+        cls._logged_in = False
+
+    @staticmethod
+    def _bs_code(code: str) -> str:
+        """转 BaoStock 格式: sh.600519 / sz.000858"""
+        prefix = "sh" if code.startswith(("6", "9")) else "sz"
+        return f"{prefix}.{code}"
+
+    def get_daily_data(self, code: str, days: int = 60) -> list[StockDaily]:
+        self._ensure_login()
+        import baostock as bs
+
+        bs_code = self._bs_code(code)
+        end = datetime.now().strftime("%Y-%m-%d")
+        start = (datetime.now() - timedelta(days=days * 2)).strftime("%Y-%m-%d")
+
+        rs = bs.query_history_k_data_plus(
+            bs_code,
+            "date,open,high,low,close,volume,amount,pctChg,turn",
+            start_date=start, end_date=end,
+            frequency="d", adjustflag="2",  # 前复权
+        )
+
+        rows = []
+        while rs.next():
+            rows.append(rs.get_row_data())
+
+        if not rows:
+            return []
+
+        records = []
+        for row in rows[-days:]:
+            try:
+                records.append(StockDaily(
+                    date=row[0],
+                    open=float(row[1]),
+                    high=float(row[2]),
+                    low=float(row[3]),
+                    close=float(row[4]),
+                    volume=float(row[5]),
+                    amount=float(row[6]) if row[6] else 0,
+                    pct_chg=float(row[7]) if row[7] else 0,
+                    turnover=float(row[8]) if row[8] else 0,
+                ))
+            except (ValueError, IndexError):
+                continue
+        return records
+
+    def get_realtime_quote(self, code: str) -> Optional[RealtimeQuote]:
+        """BaoStock 不提供实时行情，用最近日线模拟"""
+        daily = self.get_daily_data(code, days=1)
+        if not daily:
+            return None
+        d = daily[-1]
+        return RealtimeQuote(
+            code=code,
+            name=self.get_stock_name(code),
+            price=d.close,
+            open=d.open,
+            high=d.high,
+            low=d.low,
+            pre_close=d.close - d.close * d.pct_chg / (100 + d.pct_chg) if abs(d.pct_chg) < 99 else d.close * 0.5,
+            pct_chg=d.pct_chg,
+            volume=d.volume,
+            amount=d.amount,
+            turnover=d.turnover,
+            volume_ratio=0,
+            source="baostock:daily_last",
+        )
+
+    def get_stock_name(self, code: str) -> str:
+        self._ensure_login()
+        import baostock as bs
+
+        bs_code = self._bs_code(code)
+        rs = bs.query_stock_basic(code=bs_code)
+        if rs.error_code == "0":
+            while rs.next():
+                row = rs.get_row_data()
+                return row[1]  # code_name
+        return code
+
+    def get_stock_info(self, code: str) -> dict:
+        self._ensure_login()
+        import baostock as bs
+
+        bs_code = self._bs_code(code)
+        rs = bs.query_stock_basic(code=bs_code)
+        if rs.error_code == "0":
+            while rs.next():
+                row = rs.get_row_data()
+                return {
+                    "code": row[0].replace("sh.", "").replace("sz.", ""),
+                    "name": row[1],
+                    "ipo_date": row[2] if len(row) > 2 else "",
+                }
+        return {}
+
+    def get_fund_flow(self, code: str, days: int = 5) -> list:
+        """BaoStock 不支持资金流向"""
+        return []
+
+    def get_market_snapshot(self) -> list:
+        """BaoStock 不支持全市场快照"""
+        return []
