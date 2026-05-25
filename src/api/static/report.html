@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>投资日报 — 智投未来</title>
+<link rel="stylesheet" href="/static/css/style.css">
+<script src="/static/js/common.js"></script>
+</head>
+<body>
+
+<!-- Navigation -->
+<nav class="navbar">
+  <div class="nav-inner">
+    <a class="navbar-brand" href="/home"><span class="brand-icon">&#9670;</span> 智投未来</a>
+    <div class="navbar-links">
+      <a class="nav-link" href="/home">首页</a>
+      <a class="nav-link" href="/dashboard">看板</a>
+      <a class="nav-link" href="/history">历史记录</a>
+      <a class="nav-link" href="/report">日报</a>
+    </div>
+    <div class="navbar-status">
+      <span class="status-dot" id="statusDot"></span>
+      <span id="statusText">检查中...</span>
+    </div>
+  </div>
+</nav>
+
+<div class="container">
+
+<div class="header-row">
+  <div class="section-title" style="margin-bottom:0;border-bottom:none;padding-bottom:0;">
+    投资日报
+  </div>
+  <div style="display:flex;gap:10px;align-items:center;">
+    <select id="dateSelect" onchange="loadDate(this.value)">
+      <option value="">最新</option>
+    </select>
+    <button id="downloadBtn" onclick="downloadReport()" title="下载 Markdown">&#128229; 下载</button>
+  </div>
+</div>
+
+<div id="reportContainer">
+  <div class="empty">加载中...</div>
+</div>
+
+<div class="no-data" id="noData" style="display:none;">
+  <h2>暂无日报</h2>
+  <p>运行以下命令生成日报：</p>
+  <code>python -m src.main --demo</code>
+</div>
+
+</div>
+
+<footer class="footer">
+  智投未来 &copy; 2026 · A股日内投资智能体
+</footer>
+
+<script>
+let currentDate = '';
+let currentRawMd = '';
+
+async function init() {
+  await populateDateSelect(document.getElementById('dateSelect'));
+  loadReport('');
+}
+
+async function loadReport(date) {
+  currentDate = date;
+  try {
+    const d = await apiFetch('/api/report', date || undefined);
+    if (d.report) {
+      currentRawMd = d.report;
+      document.getElementById('noData').style.display = 'none';
+      document.getElementById('reportContainer').innerHTML = renderMarkdown(d.report);
+    } else {
+      document.getElementById('noData').style.display = 'block';
+      document.getElementById('reportContainer').innerHTML = '';
+    }
+    // Update download link to point to the same date
+    if (d.date) currentDate = d.date;
+  } catch(e) {
+    console.error(e);
+    document.getElementById('noData').style.display = 'block';
+    document.getElementById('reportContainer').innerHTML = '';
+  }
+}
+
+function loadDate(date) {
+  loadReport(date);
+}
+
+function downloadReport() {
+  if (currentRawMd) {
+    const blob = new Blob([currentRawMd], {type: 'text/markdown'});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'report_' + (currentDate || 'latest') + '.md';
+    a.click();
+    URL.revokeObjectURL(url);
+  } else {
+    // Fallback: direct API download
+    const path = currentDate ? '/api/report?date=' + currentDate : '/api/report';
+    window.open(path, '_blank');
+  }
+}
+
+init();
+</script>
+</body>
+</html>

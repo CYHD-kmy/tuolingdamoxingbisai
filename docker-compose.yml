@@ -1,0 +1,26 @@
+version: "3.8"
+
+services:
+  web:
+    build: .
+    container_name: zhitou-future
+    restart: always
+    ports:
+      - "${ZHITOU_PORT:-8000}:8000"
+    environment:
+      - LLM_API_KEY=${LLM_API_KEY}
+      - LLM_QUICK_MODEL=${LLM_QUICK_MODEL:-deepseek-chat}
+      - LLM_DEEP_MODEL=${LLM_DEEP_MODEL:-deepseek-reasoner}
+      - LLM_BASE_URL=${LLM_BASE_URL:-https://api.deepseek.com}
+      - TUSHARE_TOKEN=${TUSHARE_TOKEN:-}
+      - ZHITOU_HOST=0.0.0.0
+      - ZHITOU_PORT=8000
+      - ZHITOU_LOG_LEVEL=${ZHITOU_LOG_LEVEL:-info}
+    volumes:
+      - ./results:/app/results
+      - ./logs:/app/logs
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3

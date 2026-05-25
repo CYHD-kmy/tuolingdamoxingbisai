@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>智投未来 — A股日内投资智能体</title>
+<link rel="stylesheet" href="/static/css/style.css">
+<script src="/static/js/common.js"></script>
+</head>
+<body>
+
+<!-- Navigation -->
+<nav class="navbar">
+  <div class="nav-inner">
+    <a class="navbar-brand" href="/home"><span class="brand-icon">&#9670;</span> 智投未来</a>
+    <div class="navbar-links">
+      <a class="nav-link" href="/home">首页</a>
+      <a class="nav-link" href="/dashboard">看板</a>
+      <a class="nav-link" href="/history">历史记录</a>
+      <a class="nav-link" href="/report">日报</a>
+    </div>
+    <div class="navbar-status">
+      <span class="status-dot" id="statusDot"></span>
+      <span id="statusText">检查中...</span>
+    </div>
+  </div>
+</nav>
+
+<div class="container">
+
+<!-- Hero -->
+<div class="hero">
+  <h1>&#9670; 智投未来</h1>
+  <p class="subtitle">A股日内投资智能体 · 多 Agent 协作决策系统</p>
+  <div class="hero-buttons">
+    <a href="/dashboard" class="btn btn-primary">查看实时看板</a>
+    <a href="/report" class="btn btn-secondary">阅读今日日报</a>
+  </div>
+</div>
+
+<!-- Status Overview -->
+<div class="section">
+  <div class="section-title">最新概况</div>
+  <div class="status-bar" id="statusBar">
+    <div class="stat-card"><div class="val">--</div><div class="lbl">加载中...</div></div>
+  </div>
+</div>
+
+<!-- Two-column layout -->
+<div style="display:grid; grid-template-columns:1fr 1fr; gap:20px; margin-bottom:28px;">
+
+<!-- Pipeline Architecture -->
+<div class="section" style="margin-bottom:0;">
+  <div class="section-title">流水线架构</div>
+  <div class="arch-flow">
+    <div class="arch-node"><div class="icon">&#128230;</div><div class="label">数据层</div></div>
+    <span class="arch-arrow">&#10142;</span>
+    <div class="arch-node"><div class="icon">&#128269;</div><div class="label">筛选层</div></div>
+    <span class="arch-arrow">&#10142;</span>
+    <div class="arch-node"><div class="icon">&#129504;</div><div class="label">分析层</div></div>
+    <span class="arch-arrow">&#10142;</span>
+    <div class="arch-node"><div class="icon">&#128202;</div><div class="label">决策层</div></div>
+    <span class="arch-arrow">&#10142;</span>
+    <div class="arch-node"><div class="icon">&#128196;</div><div class="label">输出层</div></div>
+  </div>
+</div>
+
+<!-- Key Features -->
+<div class="section" style="margin-bottom:0;">
+  <div class="section-title">关键特性</div>
+  <div style="display:grid; gap:8px;">
+    <div class="chip">8 因子量化打分 (趋势/动量/量价/资金/情绪/质量/风险/流动性)</div>
+    <div class="chip">四维分析师并行 (技术面/基本面/资金面/消息面)</div>
+    <div class="chip">多空辩论引擎 (Bull vs Bear 对抗推演)</div>
+    <div class="chip">硬约束风控校验 (仓位上限/波动率/停牌过滤)</div>
+    <div class="chip">完整推理追踪 (每笔决策可审计回放)</div>
+    <div class="chip">虚拟资金 50 万 · 单票 ≤20% · 日内熔断 5%</div>
+  </div>
+</div>
+
+</div>
+
+<!-- History Summary & Quick Start -->
+<div style="display:grid; grid-template-columns:1fr 1fr; gap:20px;">
+
+<div class="section">
+  <div class="section-title">运行历史</div>
+  <div id="historySummary" style="color:var(--muted);font-size:14px;">加载中...</div>
+</div>
+
+<div class="section">
+  <div class="section-title">快速开始</div>
+  <div style="font-size:13px; color:var(--muted); line-height:2;">
+    <p><strong>演示模式</strong> (无需网络和 API Key):</p>
+    <code style="background:var(--bg);padding:4px 8px;border-radius:4px;">python -m src.main --demo</code>
+    <p style="margin-top:12px;"><strong>正常模式</strong> (需要 LLM API Key):</p>
+    <code style="background:var(--bg);padding:4px 8px;border-radius:4px;">python -m src.main</code>
+    <p style="margin-top:12px;"><strong>启动网站</strong>:</p>
+    <code style="background:var(--bg);padding:4px 8px;border-radius:4px;">./manage.sh start</code>
+  </div>
+</div>
+
+</div>
+
+<!-- No data fallback -->
+<div class="no-data" id="noData" style="display:none;">
+  <h2>暂无运行数据</h2>
+  <p>运行以下命令生成演示数据：</p>
+  <code>python -m src.main --demo</code>
+</div>
+
+</div>
+
+<footer class="footer">
+  智投未来 &copy; 2026 · A股日内投资智能体
+</footer>
+
+<script>
+async function init() {
+  try {
+    const d = await apiFetch('/api/status');
+    if (!d.ready) {
+      document.getElementById('noData').style.display = 'block';
+      document.getElementById('statusBar').innerHTML =
+        '<div class="stat-card"><div class="val">--</div><div class="lbl">暂无数据</div></div>';
+      document.getElementById('historySummary').innerHTML = '暂无运行记录';
+      return;
+    }
+    document.getElementById('noData').style.display = 'none';
+    const totalElapsed = (d.elapsed?.total || 0).toFixed(1);
+    document.getElementById('statusBar').innerHTML =
+      '<div class="stat-card"><div class="val">'+(d.date||'-')+'</div><div class="lbl">日期</div></div>' +
+      '<div class="stat-card"><div class="val">'+(d.total_capital/10000).toFixed(0)+'万</div><div class="lbl">总资金</div></div>' +
+      '<div class="stat-card"><div class="val">'+d.decisions_count+'</div><div class="lbl">决策数</div></div>' +
+      '<div class="stat-card"><div class="val">'+d.candidates_count+'</div><div class="lbl">候选池</div></div>' +
+      '<div class="stat-card"><div class="val">'+totalElapsed+'s</div><div class="lbl">总耗时</div></div>' +
+      '<div class="stat-card"><div class="val" style="color:'+(d.errors_count?'var(--down)':'var(--up)')+'">'+d.errors_count+'</div><div class="lbl">异常</div></div>';
+  } catch(e) { console.error(e); }
+
+  try {
+    const h = await apiFetch('/api/history');
+    const count = (h.traces||[]).length;
+    if (count > 0) {
+      document.getElementById('historySummary').innerHTML =
+        '共 <strong style="color:var(--accent);">'+count+'</strong> 次运行记录 · ' +
+        '最新: <strong>'+h.traces[0].date+'</strong> ('+h.traces[0].size_kb+'KB) · ' +
+        '<a href="/history">查看全部历史 &#8594;</a>';
+    } else {
+      document.getElementById('historySummary').innerHTML = '暂无运行记录 · <a href="/dashboard">刷新</a>';
+    }
+  } catch(e) { console.error(e); }
+}
+
+init();
+</script>
+</body>
+</html>

@@ -3,19 +3,11 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>智投未来 — 日内投资看板</title>
+<title>看板 — 智投未来</title>
+<link rel="stylesheet" href="/static/css/style.css">
+<script src="/static/js/common.js"></script>
 <style>
-:root {
-  --bg: #0f1117; --card: #1a1d27; --border: #2a2d3a;
-  --text: #e1e4eb; --muted: #8b8fa3; --accent: #4f8ff7;
-  --up: #22c55e; --down: #ef4444; --hold: #f59e0b;
-  --risk-low: #22c55e; --risk-med: #f59e0b; --risk-high: #ef4444;
-}
-* { margin:0; padding:0; box-sizing:border-box; }
-body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background:var(--bg); color:var(--text); line-height:1.6; }
-.container { max-width:1200px; margin:0 auto; padding:20px; }
-
-/* Header */
+/* ── Page-specific: header bar ───────────── */
 .header { display:flex; justify-content:space-between; align-items:center; padding:16px 0; border-bottom:1px solid var(--border); margin-bottom:24px; }
 .header h1 { font-size:22px; font-weight:700; }
 .header .subtitle { color:var(--muted); font-size:13px; }
@@ -23,18 +15,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; b
 .header select, .header button { background:var(--card); color:var(--text); border:1px solid var(--border); border-radius:6px; padding:6px 12px; font-size:13px; cursor:pointer; }
 .header button:hover { border-color:var(--accent); }
 
-/* Status bar */
-.status-bar { display:grid; grid-template-columns:repeat(6,1fr); gap:12px; margin-bottom:24px; }
-.stat-card { background:var(--card); border:1px solid var(--border); border-radius:8px; padding:14px; text-align:center; }
-.stat-card .val { font-size:24px; font-weight:700; }
-.stat-card .lbl { font-size:12px; color:var(--muted); margin-top:2px; }
-
-/* Section */
-.section { margin-bottom:28px; }
-.section-title { font-size:16px; font-weight:600; margin-bottom:12px; padding-bottom:6px; border-bottom:1px solid var(--border); display:flex; align-items:center; gap:8px; }
-.section-title .badge { font-size:11px; background:var(--accent); color:#fff; padding:2px 8px; border-radius:10px; }
-
-/* Decision cards */
+/* ── Decision cards ──────────────────────── */
 .decision-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(300px,1fr)); gap:12px; }
 .decision-card { background:var(--card); border:1px solid var(--border); border-radius:8px; padding:16px; }
 .decision-card .sym { font-size:18px; font-weight:700; }
@@ -42,20 +23,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; b
 .decision-card .vol { font-size:20px; font-weight:700; color:var(--accent); margin:8px 0; }
 .decision-card .detail { font-size:12px; color:var(--muted); display:flex; justify-content:space-between; }
 
-/* Table */
-.data-table { width:100%; border-collapse:collapse; font-size:13px; }
-.data-table th { text-align:left; padding:8px 12px; border-bottom:2px solid var(--border); color:var(--muted); font-weight:500; font-size:12px; }
-.data-table td { padding:8px 12px; border-bottom:1px solid var(--border); }
-.data-table tr:hover { background:rgba(79,143,247,0.05); }
-.score-bar { display:inline-block; height:6px; border-radius:3px; background:var(--accent); }
-
-/* Collapsible */
-.reasoning { margin-top:12px; }
-.reasoning summary { cursor:pointer; font-size:13px; color:var(--accent); user-select:none; }
-.reasoning-summary:hover { text-decoration:underline; }
-.reasoning-content { margin-top:8px; padding:12px; background:rgba(79,143,247,0.05); border-radius:6px; font-size:13px; }
-
-/* Analyst signals */
+/* ── Analyst signals ─────────────────────── */
 .signals { display:grid; grid-template-columns:repeat(4,1fr); gap:8px; margin:8px 0; }
 .signal-chip { padding:6px 10px; border-radius:6px; text-align:center; font-size:11px; border:1px solid var(--border); }
 .signal-chip .type { color:var(--muted); margin-bottom:2px; }
@@ -63,48 +31,56 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; b
 .signal-bearish { border-color:var(--down); color:var(--down); }
 .signal-neutral { border-color:var(--hold); color:var(--hold); }
 
-/* Risk bar */
+/* ── Risk chips ──────────────────────────── */
 .risk-limits { display:flex; flex-wrap:wrap; gap:10px; }
 .risk-chip { padding:8px 14px; border-radius:6px; font-size:13px; border:1px solid var(--border); background:var(--card); }
 .risk-chip .pct { font-weight:700; font-size:15px; }
 
-/* Empty */
-.empty { text-align:center; padding:40px; color:var(--muted); font-size:14px; }
-.empty .icon { font-size:40px; margin-bottom:8px; }
+/* ── Detail link ─────────────────────────── */
+.report-link { font-size:13px; color:var(--accent); text-decoration:none; }
+.report-link:hover { text-decoration:underline; }
 
-/* Error state */
-.no-data { text-align:center; padding:60px 20px; }
-.no-data h2 { margin-bottom:8px; }
-.no-data p { color:var(--muted); font-size:14px; margin-bottom:20px; }
-.no-data code { background:var(--card); padding:2px 8px; border-radius:4px; font-size:13px; }
-
-/* Loader */
-.loader { display:inline-block; width:16px; height:16px; border:2px solid var(--border); border-top-color:var(--accent); border-radius:50%; animation:spin .6s linear infinite; }
-@keyframes spin { to { transform:rotate(360deg); } }
-
-/* Responsive */
+/* ── Responsive ──────────────────────────── */
 @media (max-width:768px) {
-  .status-bar { grid-template-columns:repeat(3,1fr); }
   .decision-grid { grid-template-columns:1fr; }
   .signals { grid-template-columns:repeat(2,1fr); }
 }
 </style>
 </head>
 <body>
+
+<!-- Navigation -->
+<nav class="navbar">
+  <div class="nav-inner">
+    <a class="navbar-brand" href="/home"><span class="brand-icon">&#9670;</span> 智投未来</a>
+    <div class="navbar-links">
+      <a class="nav-link" href="/home">首页</a>
+      <a class="nav-link" href="/dashboard">看板</a>
+      <a class="nav-link" href="/history">历史记录</a>
+      <a class="nav-link" href="/report">日报</a>
+    </div>
+    <div class="navbar-status">
+      <span class="status-dot" id="statusDot"></span>
+      <span id="statusText">检查中...</span>
+    </div>
+  </div>
+</nav>
+
 <div class="container">
 
-<!-- Header -->
+<!-- Page Header -->
 <div class="header">
   <div>
-    <h1>智投未来</h1>
-    <div class="subtitle">A股日内投资智能体 · 看板</div>
+    <h1>投资看板</h1>
+    <div class="subtitle">A股日内投资智能体 · 实时决策数据</div>
   </div>
   <div class="header-right">
+    <a class="report-link" href="#" id="reportLink">查看今日日报 →</a>
     <select id="dateSelect" onchange="loadDate(this.value)">
       <option value="">最新</option>
     </select>
-    <button onclick="loadDate('')" title="刷新">↻ 刷新</button>
-    <button id="autoRefresh" onclick="toggleAutoRefresh()">⏱ 自动</button>
+    <button onclick="loadDate('')" title="刷新">&#8635; 刷新</button>
+    <button id="autoRefresh" onclick="toggleAutoRefresh()">&#9201; 自动</button>
   </div>
 </div>
 
@@ -113,13 +89,13 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; b
 
 <!-- Decisions -->
 <div class="section" id="decisionsSection">
-  <div class="section-title">📊 最终决策 <span class="badge" id="decCount">0</span></div>
+  <div class="section-title">&#128202; 最终决策 <span class="badge" id="decCount">0</span></div>
   <div class="decision-grid" id="decisions"></div>
 </div>
 
 <!-- Candidates -->
 <div class="section">
-  <div class="section-title">🎯 候选池 <span class="badge" id="candCount">0</span></div>
+  <div class="section-title">&#127919; 候选池 <span class="badge" id="candCount">0</span></div>
   <div style="overflow-x:auto;">
     <table class="data-table" id="candidatesTable">
       <thead><tr>
@@ -134,13 +110,13 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; b
 
 <!-- Risk Limits -->
 <div class="section">
-  <div class="section-title">🛡 风控约束</div>
+  <div class="section-title">&#128737; 风控约束</div>
   <div class="risk-limits" id="riskLimits"></div>
 </div>
 
 <!-- Pipeline Elapsed -->
 <div class="section">
-  <div class="section-title">⏳ 流水线耗时</div>
+  <div class="section-title">&#9203; 流水线耗时</div>
   <div id="elapsedInfo" style="color:var(--muted);font-size:14px;"></div>
 </div>
 
@@ -152,9 +128,15 @@ body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; b
   <h2>暂无数据</h2>
   <p>请先运行流水线生成结果：</p>
   <code>cd 智投未来项目设计 && python -m src.main</code>
+  <p style="margin-top:8px;">或使用演示模式：</p>
+  <code>python -m src.main --demo</code>
 </div>
 
 </div>
+
+<footer class="footer">
+  智投未来 &copy; 2026 · A股日内投资智能体
+</footer>
 
 <script>
 let currentDate = '';
@@ -182,18 +164,22 @@ async function loadStatus() {
     document.getElementById('noData').style.display = 'none';
     const totalElapsed = (d.elapsed?.total || 0).toFixed(1);
     document.getElementById('statusBar').innerHTML =
-      `<div class="stat-card"><div class="val">${d.date||'-'}</div><div class="lbl">日期</div></div>
-       <div class="stat-card"><div class="val">${(d.total_capital/10000).toFixed(0)}万</div><div class="lbl">总资金</div></div>
-       <div class="stat-card"><div class="val">${d.decisions_count}</div><div class="lbl">决策数</div></div>
-       <div class="stat-card"><div class="val">${d.candidates_count}</div><div class="lbl">候选池</div></div>
-       <div class="stat-card"><div class="val">${totalElapsed}s</div><div class="lbl">总耗时</div></div>
-       <div class="stat-card"><div class="val" style="color:${d.errors_count?'var(--down)':'var(--up)'}">${d.errors_count}</div><div class="lbl">异常</div></div>`;
+      '<div class="stat-card"><div class="val">'+(d.date||'-')+'</div><div class="lbl">日期</div></div>' +
+      '<div class="stat-card"><div class="val">'+(d.total_capital/10000).toFixed(0)+'万</div><div class="lbl">总资金</div></div>' +
+      '<div class="stat-card"><div class="val">'+d.decisions_count+'</div><div class="lbl">决策数</div></div>' +
+      '<div class="stat-card"><div class="val">'+d.candidates_count+'</div><div class="lbl">候选池</div></div>' +
+      '<div class="stat-card"><div class="val">'+totalElapsed+'s</div><div class="lbl">总耗时</div></div>' +
+      '<div class="stat-card"><div class="val" style="color:'+(d.errors_count?'var(--down)':'var(--up)')+'">'+d.errors_count+'</div><div class="lbl">异常</div></div>';
+
+    if (d.date) {
+      document.getElementById('reportLink').href = '/report?date=' + d.date;
+    }
 
     if (d.errors?.length) {
       const sec = document.getElementById('errorsSection');
       sec.style.display = 'block';
-      sec.innerHTML = '<div class="section-title">⚠ 警告/错误</div>' +
-        d.errors.map(e => `<div style="color:var(--down);font-size:13px;margin:4px 0;">- ${e}</div>`).join('');
+      sec.innerHTML = '<div class="section-title">&#9888; 警告/错误</div>' +
+        d.errors.map(e => '<div style="color:var(--down);font-size:13px;margin:4px 0;">- '+e+'</div>').join('');
     }
   } catch(e) { console.error(e); }
 }
@@ -208,13 +194,11 @@ async function loadDecisions() {
       return;
     }
     document.getElementById('decisions').innerHTML = d.decisions.map(dec => {
-      // Estimate value from cash_used proportion
-      const estValue = d.total_positions > 0 ? (d.cash_used / d.total_positions * (dec.volume > 0 ? 1 : 0)).toFixed(0) : 0;
-      return `<div class="decision-card" data-code="${dec.symbol}">
-        <div class="sym">${dec.symbol} <span class="name">${dec.symbol_name}</span></div>
-        <div class="vol">${dec.volume.toLocaleString()} 股</div>
-        <div class="detail"><span>${(dec.volume/100).toFixed(0)} 手</span><span>代码 ${dec.symbol}</span></div>
-      </div>`;
+      return '<div class="decision-card" data-code="'+dec.symbol+'">' +
+        '<div class="sym">'+dec.symbol+' <span class="name">'+dec.symbol_name+'</span></div>' +
+        '<div class="vol">'+dec.volume.toLocaleString()+' 股</div>' +
+        '<div class="detail"><span>'+(dec.volume/100).toFixed(0)+' 手</span><span>代码 '+dec.symbol+'</span></div>' +
+      '</div>';
     }).join('');
 
     for (const dec of d.decisions) loadStockDetail(dec.symbol);
@@ -225,45 +209,42 @@ async function loadStockDetail(code) {
   try {
     const r = await fetch(api('/api/analysis?code=' + code));
     const d = await r.json();
-    const card = document.querySelector(`.decision-card[data-code="${code}"]`);
+    const card = document.querySelector('.decision-card[data-code="'+code+'"]');
     if (!card || !d.verdict) return;
 
     const dirLabels = {buy:'买入', sell:'卖出', hold:'持有'};
     const detail = document.createElement('div');
     detail.style.marginTop = '12px';
 
-    // Analyst signals
     if (d.analysis) {
       let sigHtml = '<div class="signals">';
       for (const [type, a] of Object.entries(d.analysis)) {
         const cls = a.signal === 'bullish' ? 'signal-bullish' : a.signal === 'bearish' ? 'signal-bearish' : 'signal-neutral';
-        sigHtml += `<div class="signal-chip ${cls}"><div class="type">${type}</div>${a.signal} ${(a.confidence*100).toFixed(0)}%</div>`;
+        sigHtml += '<div class="signal-chip '+cls+'"><div class="type">'+type+'</div>'+a.signal+' '+(a.confidence*100).toFixed(0)+'%</div>';
       }
       sigHtml += '</div>';
       detail.innerHTML += sigHtml;
     }
 
-    // Verdict
     if (d.verdict) {
       const v = d.verdict;
-      detail.innerHTML += `<details class="reasoning">
-        <summary>📋 研判: ${dirLabels[v.direction]||v.direction} · 置信度 ${(v.confidence*100).toFixed(0)}% · 风险: ${v.risk_level}</summary>
-        <div class="reasoning-content">
-          <strong>核心理由:</strong> ${v.core_reasoning||'无'}<br>
-          ${v.key_risks?.length ? '<strong>关键风险:</strong> '+v.key_risks.join('; ') : ''}
-          ${v.target_price ? '<br><strong>目标价:</strong> ¥'+v.target_price.toFixed(2) : ''}
-        </div>
-      </details>`;
+      detail.innerHTML += '<details class="reasoning">' +
+        '<summary>&#128203; 研判: '+dirLabels[v.direction||'hold']+' · 置信度 '+(v.confidence*100).toFixed(0)+'% · 风险: '+v.risk_level+'</summary>' +
+        '<div class="reasoning-content">' +
+          '<strong>核心理由:</strong> '+(v.core_reasoning||'无')+'<br>' +
+          (v.key_risks?.length ? '<strong>关键风险:</strong> '+v.key_risks.join('; ') : '') +
+          (v.target_price ? '<br><strong>目标价:</strong> ¥'+v.target_price.toFixed(2) : '') +
+        '</div>' +
+      '</details>';
     }
 
-    // Debate
     if (d.debate?.total_rounds) {
-      detail.innerHTML += `<details class="reasoning">
-        <summary>⚔ 辩论 (${d.debate.total_rounds}轮)</summary>
-        <div class="reasoning-content">
-          ${(d.debate.rounds||[]).map(r => `<p><strong>第${r.round}轮 多头:</strong> ${(r.bull_argument||'').slice(0,200)}</p>`).join('')}
-        </div>
-      </details>`;
+      detail.innerHTML += '<details class="reasoning">' +
+        '<summary>&#9876; 辩论 ('+d.debate.total_rounds+'轮)</summary>' +
+        '<div class="reasoning-content">' +
+          (d.debate.rounds||[]).map(r => '<p><strong>第'+r.round+'轮 多头:</strong> '+(r.bull_argument||'').slice(0,200)+'</p>').join('') +
+        '</div>' +
+      '</details>';
     }
 
     card.appendChild(detail);
@@ -281,13 +262,13 @@ async function loadCandidates() {
     }
     document.getElementById('candidatesBody').innerHTML = d.candidates.map((c, i) => {
       const barW = Math.max((c.score||0)/100*80, 4);
-      return `<tr>
-        <td>${i+1}</td><td>${c.code}</td><td>${c.name}</td>
-        <td><span style="color:var(--accent);font-weight:600;">${(c.score||0).toFixed(1)}</span> <span class="score-bar" style="width:${barW}px;"></span></td>
-        <td>${fmt(c.trend)}</td><td>${fmt(c.momentum)}</td><td>${fmt(c.volume_price)}</td>
-        <td>${fmt(c.capital_flow)}</td><td>${fmt(c.sentiment)}</td>
-        <td>${fmt(c.quality)}</td><td>${fmt(c.risk)}</td><td>${fmt(c.liquidity)}</td>
-      </tr>`;
+      return '<tr>' +
+        '<td>'+(i+1)+'</td><td>'+c.code+'</td><td>'+c.name+'</td>' +
+        '<td><span style="color:var(--accent);font-weight:600;">'+(c.score||0).toFixed(1)+'</span> <span class="score-bar" style="width:'+barW+'px;"></span></td>' +
+        '<td>'+fmt(c.trend)+'</td><td>'+fmt(c.momentum)+'</td><td>'+fmt(c.volume_price)+'</td>' +
+        '<td>'+fmt(c.capital_flow)+'</td><td>'+fmt(c.sentiment)+'</td>' +
+        '<td>'+fmt(c.quality)+'</td><td>'+fmt(c.risk)+'</td><td>'+fmt(c.liquidity)+'</td>' +
+      '</tr>';
     }).join('');
   } catch(e) { console.error(e); }
 }
@@ -303,13 +284,13 @@ async function loadRisk() {
     }
     document.getElementById('riskLimits').innerHTML = Object.entries(limits).map(([code, l]) => {
       const rc = {'low':'var(--risk-low)','medium':'var(--risk-med)','high':'var(--risk-high)'}[l.risk_level]||'var(--muted)';
-      return `<div class="risk-chip">
-        <strong>${code}</strong> ${l.name||''}<br>
-        <span class="pct" style="color:${rc}">${(l.max_position_pct*100).toFixed(0)}%</span> 仓位 ·
-        最大 ${l.max_shares} 股 ·
-        波动率 ${(l.volatility||0).toFixed(1)}%
-        ${l.risk_flags?.length ? '<br>⚠ '+l.risk_flags.join(', ') : ''}
-      </div>`;
+      return '<div class="risk-chip">' +
+        '<strong>'+code+'</strong> '+l.name+'<br>' +
+        '<span class="pct" style="color:'+rc+'">'+(l.max_position_pct*100).toFixed(0)+'%</span> 仓位 · ' +
+        '最大 '+l.max_shares+' 股 · ' +
+        '波动率 '+(l.volatility||0).toFixed(1)+'%' +
+        (l.risk_flags?.length ? '<br>&#9888; '+l.risk_flags.join(', ') : '') +
+      '</div>';
     }).join('');
   } catch(e) { console.error(e); }
 }
@@ -321,9 +302,9 @@ async function loadElapsed() {
     const labels = {screening:'海选筛选', analysis:'深度分析', risk:'风控计算', portfolio:'组合构建'};
     const stages = d.elapsed?.stages || d.elapsed || {};
     let html = Object.entries(stages).map(([k, v]) =>
-      `<span style="display:inline-block;margin-right:20px;">${labels[k]||k}: <strong>${v.toFixed(1)}s</strong></span>`
+      '<span style="display:inline-block;margin-right:20px;">'+(labels[k]||k)+': <strong>'+v.toFixed(1)+'s</strong></span>'
     ).join('');
-    if (d.elapsed?.total) html += `<span style="display:inline-block;margin-right:20px;">总计: <strong style="color:var(--accent)">${d.elapsed.total.toFixed(1)}s</strong></span>`;
+    if (d.elapsed?.total) html += '<span style="display:inline-block;margin-right:20px;">总计: <strong style="color:var(--accent)">'+d.elapsed.total.toFixed(1)+'s</strong></span>';
     document.getElementById('elapsedInfo').innerHTML = html || '暂无耗时数据';
   } catch(e) { console.error(e); }
 }

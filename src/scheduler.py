@@ -55,7 +55,8 @@ def run_scheduled() -> None:
         running = False
 
     signal.signal(signal.SIGINT, _shutdown)
-    signal.signal(signal.SIGTERM, _shutdown)
+    if hasattr(signal, "SIGTERM"):
+        signal.signal(signal.SIGTERM, _shutdown)
 
     while running:
         now = datetime.now()

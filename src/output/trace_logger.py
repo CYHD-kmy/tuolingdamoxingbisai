@@ -27,8 +27,9 @@ def build_trace(state: PipelineState, total_elapsed: float) -> dict[str, Any]:
     candidates = [
         {
             "code": c.code, "name": c.name, "score": c.composite,
-            **{k: getattr(c, k, 0) for k in ["trend", "momentum", "volume_price",
-                   "capital_flow", "sentiment", "quality", "risk", "liquidity"]}
+            **{k: c.scores.get(k, 0) if hasattr(c, "scores") else getattr(c, k, 0)
+               for k in ["trend", "momentum", "volume_price",
+                         "capital_flow", "sentiment", "quality", "risk", "liquidity"]}
         }
         for c in state.candidates
     ]

@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>历史记录 — 智投未来</title>
+<link rel="stylesheet" href="/static/css/style.css">
+<script src="/static/js/common.js"></script>
+<style>
+.history-table td.actions { white-space:nowrap; }
+.history-table td.actions a { margin-right:10px; font-size:13px; }
+</style>
+</head>
+<body>
+
+<!-- Navigation -->
+<nav class="navbar">
+  <div class="nav-inner">
+    <a class="navbar-brand" href="/home"><span class="brand-icon">&#9670;</span> 智投未来</a>
+    <div class="navbar-links">
+      <a class="nav-link" href="/home">首页</a>
+      <a class="nav-link" href="/dashboard">看板</a>
+      <a class="nav-link" href="/history">历史记录</a>
+      <a class="nav-link" href="/report">日报</a>
+    </div>
+    <div class="navbar-status">
+      <span class="status-dot" id="statusDot"></span>
+      <span id="statusText">检查中...</span>
+    </div>
+  </div>
+</nav>
+
+<div class="container">
+
+<div class="header-row">
+  <div class="section-title" style="margin-bottom:0;border-bottom:none;padding-bottom:0;">
+    历史记录 <span class="badge" id="totalCount">0</span>
+  </div>
+  <button onclick="init()" title="刷新列表">&#8635; 刷新</button>
+</div>
+
+<div style="overflow-x:auto;">
+  <table class="data-table history-table">
+    <thead><tr>
+      <th>日期</th>
+      <th>文件大小</th>
+      <th>决策数</th>
+      <th>候选数</th>
+      <th>总耗时</th>
+      <th>异常</th>
+      <th>操作</th>
+    </tr></thead>
+    <tbody id="historyBody">
+      <tr><td colspan="7" style="text-align:center;color:var(--muted);padding:20px;">加载中...</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<div class="no-data" id="noData" style="display:none;">
+  <h2>暂无历史记录</h2>
+  <p>运行以下命令生成第一份数据：</p>
+  <code>python -m src.main --demo</code>
+</div>
+
+</div>
+
+<footer class="footer">
+  智投未来 &copy; 2026 · A股日内投资智能体
+</footer>
+
+<script>
+async function init() {
+  try {
+    const h = await apiFetch('/api/history');
+    const traces = h.traces || [];
+    document.getElementById('totalCount').textContent = traces.length;
+
+    if (!traces.length) {
+      document.getElementById('noData').style.display = 'block';
+      document.getElementById('historyBody').innerHTML =
+        '<tr><td colspan="7" style="text-align:center;color:var(--muted);padding:20px;">暂无记录</td></tr>';
+      return;
+    }
+    document.getElementById('noData').style.display = 'none';
+
+    // Load summary for each trace
+    const rows = [];
+    for (const t of traces) {
+      try {
+        const s = await apiFetch('/api/status', t.date);
+        const elapsed = s.elapsed?.total || 0;
+        rows.push({
+          date: t.date,
+          size_kb: t.size_kb,
+          decisions: s.decisions_count || 0,
+          candidates: s.candidates_count || 0,
+          elapsed: elapsed.toFixed(1),
+          errors: s.errors_count || 0,
+          ready: s.ready,
+        });
+      } catch(e) {
+        rows.push({
+          date: t.date, size_kb: t.size_kb,
+          decisions: '-', candidates: '-', elapsed: '-', errors: '-', ready: false,
+        });
+      }
+    }
+
+    document.getElementById('historyBody').innerHTML = rows.map(r =>
+      '<tr>' +
+        '<td><strong>'+r.date+'</strong></td>' +
+        '<td>'+r.size_kb+'KB</td>' +
+        '<td>'+r.decisions+'</td>' +
+        '<td>'+r.candidates+'</td>' +
+        '<td>'+r.elapsed+'s</td>' +
+        '<td style="color:'+(r.errors > 0 ? 'var(--down)' : 'var(--up)')+'">'+r.errors+'</td>' +
+        '<td class="actions">' +
+          '<a href="/dashboard?date='+r.date+'">看板</a>' +
+          '<a href="/report?date='+r.date+'">日报</a>' +
+        '</td>' +
+      '</tr>'
+    ).join('');
+
+  } catch(e) {
+    console.error(e);
+    document.getElementById('historyBody').innerHTML =
+      '<tr><td colspan="7" style="text-align:center;color:var(--down);padding:20px;">加载失败: '+e.message+'</td></tr>';
+  }
+}
+
+init();
+</script>
+</body>
+</html>

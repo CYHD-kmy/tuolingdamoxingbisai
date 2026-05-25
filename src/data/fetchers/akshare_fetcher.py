@@ -396,9 +396,14 @@ class AKShareFetcher:
         return records
 
     def _fetch_market_snapshot(self) -> list[MarketSnapshot]:
-        """全市场快照"""
-        import akshare as ak
+        """全市场快照 — 优先用 curl (绕过 TLS 指纹问题), akshare 做备选"""
+        # 先尝试 curl 直连 (系统 curl 的 TLS 指纹不被封锁)
+        try:
+            return self._fetch_market_snapshot_via_curl()
+        except Exception:
+            logger.debug("curl 获取快照失败，回退到 akshare")
 
+        import akshare as ak
         df = ak.stock_zh_a_spot_em()
         df = df.sort_values("成交额", ascending=False).head(3000)
 
@@ -418,6 +423,56 @@ class AKShareFetcher:
                 ))
             except (ValueError, KeyError):
                 continue
+        return snapshots
+
+    def _fetch_market_snapshot_via_curl(self) -> list[MarketSnapshot]:
+        """通过系统 curl 获取全市场快照 (绕过 Python TLS 指纹封锁)"""
+        import subprocess
+        import json as _json
+
+        snapshots: list[MarketSnapshot] = []
+        # 分批获取: 每页100只, 取30页 = 3000只
+        for page in range(1, 31):
+            url = (
+                "https://push2.eastmoney.com/api/qt/clist/get"
+                f"?pn={page}&pz=100&po=1&np=1"
+                "&ut=bd1d9ddb04089700cf9c27f6f7426281&fltt=2&invt=2&fid=f12"
+                "&fs=m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23,m:0+t:81+s:2048"
+                "&fields=f1,f2,f3,f4,f5,f6,f7,f8,f9,f10,f12,f13,f14,f15,f16,"
+                "f17,f18,f20,f21,f23,f24,f25,f22,f11,f62,f128,f136,f115,f152"
+            )
+            try:
+                result = subprocess.run(
+                    ["curl", "-s", "--max-time", "15", url],
+                    capture_output=True, text=True, timeout=20,
+                )
+                if result.returncode != 0:
+                    continue
+                data = _json.loads(result.stdout)
+                rows = data.get("data", {}).get("diff", [])
+                if not rows:
+                    break
+                for r in rows:
+                    try:
+                        snapshots.append(MarketSnapshot(
+                            code=str(r.get("f12", "")),
+                            name=str(r.get("f14", "")),
+                            price=float(r.get("f2", 0) or 0),
+                            pct_chg=float(r.get("f3", 0) or 0),
+                            volume_ratio=float(r.get("f10", 0) or 1),
+                            turnover=float(r.get("f8", 0) or 0),
+                            amount=float(r.get("f6", 0) or 0),
+                            pe=float(r.get("f9", 0) or 0),
+                            total_mv=float(r.get("f20", 0) or 0) / 1e8,
+                        ))
+                    except (ValueError, KeyError):
+                        continue
+            except Exception:
+                continue
+
+        if not snapshots:
+            raise RuntimeError("curl 获取全市场快照为空")
+        logger.info("curl: 获取 %d 只股票快照 (%d 页)", len(snapshots), page)
         return snapshots
 
     def _fetch_news(self, keyword: str, days: int) -> list[dict]:

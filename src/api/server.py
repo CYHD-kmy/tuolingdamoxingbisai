@@ -1,11 +1,22 @@
 """
-FastAPI 看板服务 — 读取流水线结果并提供 Web 展示。
+FastAPI 看板服务 — 多页面常驻网站。
 
 启动方式:
     python -m src.api.server
-    或: uvicorn src.api.server:app --reload --port 8000
+    或: uvicorn src.api.server:app --host 0.0.0.0 --port 8000
+    或: ./manage.sh start
 
 访问: http://localhost:8000
+
+页面:
+    /home       首页 (落地页)
+    /dashboard  看板 (实时决策数据)
+    /history    历史记录 (所有运行记录)
+    /report     日报 (Markdown 渲染)
+
+API (8 个端点):
+    /api/status /api/decisions /api/candidates /api/analysis
+    /api/risk /api/report /api/history /api/trace
 """
 
 from __future__ import annotations
@@ -14,6 +25,7 @@ import json
 import logging
 import os
 from datetime import datetime
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import Any
 
@@ -21,13 +33,52 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import HTMLResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 
-logger = logging.getLogger(__name__)
+# ── 日志配置 ────────────────────────────────────
 
-app = FastAPI(title="智投未来 看板", version="1.0.0")
+LOG_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "logs")
+os.makedirs(LOG_DIR, exist_ok=True)
+
+logger = logging.getLogger("src.api")
+
+_file_handler = RotatingFileHandler(
+    os.path.join(LOG_DIR, "server.log"),
+    maxBytes=10 * 1024 * 1024,  # 10MB
+    backupCount=5,
+    encoding="utf-8",
+)
+_file_handler.setFormatter(logging.Formatter(
+    "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+))
+_file_handler.setLevel(logging.INFO)
+
+_root_logger = logging.getLogger()
+_root_logger.addHandler(_file_handler)
+
+# Also log uvicorn access to file
+_access_logger = logging.getLogger("uvicorn.access")
+_access_logger.addHandler(_file_handler)
+
+# ── App ─────────────────────────────────────────
+
+app = FastAPI(title="智投未来 看板", version="1.1.0")
 
 RESULTS_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "results")
 STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
 
+# 挂载静态资源 (CSS / JS)
+app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+
+
+def _serve_html(filename: str) -> HTMLResponse:
+    """读取并返回静态 HTML 文件"""
+    html_path = os.path.join(STATIC_DIR, filename)
+    if not os.path.isfile(html_path):
+        return HTMLResponse(f"<h1>{filename} 未找到</h1>", status_code=404)
+    with open(html_path, encoding="utf-8") as f:
+        return HTMLResponse(f.read())
+
+
+# ── trace 工具函数 ──────────────────────────────
 
 def _latest_trace() -> dict[str, Any] | None:
     """加载最新的 trace JSON 文件"""
@@ -83,19 +134,45 @@ def _latest_report() -> str | None:
         return f.read()
 
 
-# ── 静态文件 ──────────────────────────────────
+# ── 页面路由 ────────────────────────────────────
 
 @app.get("/", response_class=HTMLResponse)
 async def index():
-    """看板首页"""
-    html_path = os.path.join(STATIC_DIR, "dashboard.html")
-    if not os.path.isfile(html_path):
-        return HTMLResponse("<h1>dashboard.html 未找到</h1>", status_code=404)
-    with open(html_path, encoding="utf-8") as f:
-        return HTMLResponse(f.read())
+    """首页 (落地页)"""
+    return _serve_html("home.html")
 
 
-# ── API ───────────────────────────────────────
+@app.get("/home", response_class=HTMLResponse)
+async def home():
+    """首页"""
+    return _serve_html("home.html")
+
+
+@app.get("/dashboard", response_class=HTMLResponse)
+async def dashboard():
+    """看板页面"""
+    return _serve_html("dashboard.html")
+
+
+@app.get("/history", response_class=HTMLResponse)
+async def history_page():
+    """历史记录页面"""
+    return _serve_html("history.html")
+
+
+@app.get("/report", response_class=HTMLResponse)
+async def report_page():
+    """日报页面"""
+    return _serve_html("report.html")
+
+
+# ── API 路由 ────────────────────────────────────
+
+@app.get("/api/health")
+async def api_health():
+    """健康检查 (供负载均衡器/监控使用)"""
+    return {"status": "ok"}
+
 
 @app.get("/api/status")
 async def api_status():
@@ -216,7 +293,7 @@ async def api_trace(date: str | None = None):
     return trace
 
 
-# ── 启动入口 ──────────────────────────────────
+# ── 启动入口 ─────────────────────────────────────
 
 if __name__ == "__main__":
     import uvicorn

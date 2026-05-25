@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# Virtual environments
+venv/
+.venv/
+
+# Environment
+.env
+.env.local
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Runtime
+.server.pid
+logs/
+results/
+
+# Git
+.git/
+.gitignore

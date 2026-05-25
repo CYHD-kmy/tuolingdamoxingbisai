@@ -39,6 +39,7 @@ logs/
 
 # Runtime
 .server.pid
+.tunnel.pid
 
 # Cache
 .cache/
