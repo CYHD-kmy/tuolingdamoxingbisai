@@ -26,6 +26,9 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from src.utils.config import get_config
 from src.graph.workflow import run_pipeline
+from src.output.json_formatter import format_decisions
+from src.output.trace_logger import save_trace
+from src.output.report_generator import generate_daily_report
 
 
 def setup_logging(level: int = logging.INFO) -> None:
@@ -86,7 +89,7 @@ def main() -> None:
     print("=" * 50)
 
     if state.final_result and state.final_result.decisions:
-        decisions_json = [d.to_dict() for d in state.final_result.decisions]
+        decisions_json = format_decisions(state.final_result.decisions)
         print(json.dumps(decisions_json, ensure_ascii=False, indent=2))
         print(f"\n使用资金: ¥{state.final_result.cash_used:,.0f}")
         print(f"剩余资金: ¥{state.final_result.cash_remaining:,.0f}")
@@ -104,32 +107,15 @@ def main() -> None:
 
     # 保存结果
     if config.save_trace:
-        os.makedirs(config.results_dir, exist_ok=True)
+        trace_path = save_trace(state, total_elapsed, config.results_dir)
+        logger.info("结果已保存: %s", trace_path)
+
+        report_md = generate_daily_report(state)
         date_str = datetime.now().strftime("%Y%m%d")
-        result_path = os.path.join(config.results_dir, f"result_{date_str}.json")
-        trace = {
-            "date": date_str,
-            "elapsed": total_elapsed,
-            "stage_elapsed": state.elapsed,
-            "candidates": [
-                {"code": c.code, "name": c.name, "score": c.composite}
-                for c in state.candidates
-            ],
-            "verdicts": {
-                code: {
-                    "direction": v.direction,
-                    "confidence": v.confidence,
-                    "risk_level": v.risk_level,
-                    "core_reasoning": v.core_reasoning,
-                }
-                for code, v in state.verdicts.items()
-            },
-            "decisions": state.final_result.decisions if state.final_result else [],
-            "errors": state.errors,
-        }
-        with open(result_path, "w", encoding="utf-8") as f:
-            json.dump(trace, f, ensure_ascii=False, indent=2)
-        logger.info("结果已保存: %s", result_path)
+        report_path = os.path.join(config.results_dir, f"report_{date_str}.md")
+        with open(report_path, "w", encoding="utf-8") as f:
+            f.write(report_md)
+        logger.info("日报已保存: %s", report_path)
 
 
 if __name__ == "__main__":
