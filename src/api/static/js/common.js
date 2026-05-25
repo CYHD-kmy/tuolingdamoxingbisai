@@ -156,3 +156,9 @@ document.addEventListener('DOMContentLoaded', () => {
   // Refresh status dot every 60s
   setInterval(updateStatusDot, 60000);
 });
+
+// ── URL params ─────────────────────────────
+function getUrlDate() {
+  const params = new URLSearchParams(window.location.search);
+  return params.get('date') || '';
+}

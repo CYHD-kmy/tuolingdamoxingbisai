@@ -139,7 +139,7 @@
 </footer>
 
 <script>
-let currentDate = '';
+let currentDate = getUrlDate();
 let autoRefreshTimer = null;
 
 function api(path) {
@@ -297,8 +297,7 @@ async function loadRisk() {
 
 async function loadElapsed() {
   try {
-    const r = await fetch('/api/status');
-    const d = await r.json();
+    const d = await apiFetch('/api/status', currentDate);
     const labels = {screening:'海选筛选', analysis:'深度分析', risk:'风控计算', portfolio:'组合构建'};
     const stages = d.elapsed?.stages || d.elapsed || {};
     let html = Object.entries(stages).map(([k, v]) =>

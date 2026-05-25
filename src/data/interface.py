@@ -156,11 +156,27 @@ class UnifiedDataInterface:
 
     def get_news(self, keyword: str, days: int = 3) -> list[dict]:
         """新闻搜索 (仅 AKShare 支持)"""
-        return self._primary.get_news(keyword, days)
+        for fetcher in self._fetchers:
+            try:
+                if hasattr(fetcher, "get_news"):
+                    result = fetcher.get_news(keyword, days)
+                    if result:
+                        return result
+            except Exception:
+                continue
+        return []
 
     def get_announcements(self, code: str, days: int = 7) -> list[dict]:
         """个股公告 (仅 AKShare 支持)"""
-        return self._primary.get_announcements(code, days)
+        for fetcher in self._fetchers:
+            try:
+                if hasattr(fetcher, "get_announcements"):
+                    result = fetcher.get_announcements(code, days)
+                    if result:
+                        return result
+            except Exception:
+                continue
+        return []
 
     # ── 批量操作 ─────────────────────────────
 

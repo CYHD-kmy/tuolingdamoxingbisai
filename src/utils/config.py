@@ -11,6 +11,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+
 
 def _env_bool(key: str, default: bool = False) -> bool:
     val = os.getenv(key, str(default)).lower()
@@ -74,7 +76,9 @@ class Config:
     max_analyst_tool_calls: int = 3
 
     # ── 输出 ────────────────────────────────────
-    results_dir: str = "./results"
+    results_dir: str = field(
+        default_factory=lambda: str(_PROJECT_ROOT / "results")
+    )
     save_trace: bool = True
 
     @property

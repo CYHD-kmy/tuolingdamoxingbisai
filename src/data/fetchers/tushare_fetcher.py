@@ -117,7 +117,7 @@ class TushareFetcher:
                     "code": code,
                     "name": str(r.get("name", "")),
                     "industry": str(r.get("industry", "")),
-                    "list_date": str(r.get("list_date", "")),
+                    "ipo_date": str(r.get("list_date", "")),
                 }
         except Exception:
             pass

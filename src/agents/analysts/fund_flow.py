@@ -100,12 +100,12 @@ class FundFlowAnalyst(BaseAnalyst):
 
             # 汇总统计
             total_main = sum(f.main_net_inflow for f in flows)
-            consecutive_in = sum(1 for f in flows if f.main_net_inflow > 0)
-            consecutive_out = sum(1 for f in flows if f.main_net_inflow < 0)
+            positive_days = sum(1 for f in flows if f.main_net_inflow > 0)
+            negative_days = sum(1 for f in flows if f.main_net_inflow < 0)
             lines.extend([
                 "",
                 f"## 汇总: 近5日主力合计 {'流入' if total_main > 0 else '流出'} {abs(total_main):.0f}万",
-                f"连续流入天数: {consecutive_in}  连续流出天数: {consecutive_out}",
+                f"净流入天数: {positive_days}  净流出天数: {negative_days}",
             ])
         else:
             lines.append("(未获取到资金流向数据，请使用 get_fund_flow 工具获取)")

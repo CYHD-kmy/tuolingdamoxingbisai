@@ -58,7 +58,8 @@ def filter_tradable(
 
         # 3. 新股过滤
         if stock_infos and s.code in stock_infos:
-            ipo_date = stock_infos[s.code].get("ipo_date", "")
+            info = stock_infos[s.code]
+            ipo_date = info.get("ipo_date", "") or info.get("list_date", "")
             if ipo_date:
                 try:
                     ipo_dt = _parse_ipo_date(ipo_date)
