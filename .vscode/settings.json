@@ -1,0 +1,10 @@
+{
+  "explorer.fileNesting.enabled": true,
+  "explorer.fileNesting.expand": false,
+  "explorer.fileNesting.patterns": {
+    "README.md": "产品设计书.md, DEPLOY.md",
+    "requirements.txt": ".env.example, .gitignore, .dockerignore, Dockerfile, docker-compose.yml, nginx.conf",
+    "manage.py": "manage.sh, com.zhitoufuture.dashboard.plist",
+    "*.py": "$(capture).py, $(capture).pyi"
+  }
+}
