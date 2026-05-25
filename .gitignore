@@ -31,10 +31,14 @@ Thumbs.db
 # Results / output
 results/
 logs/
+!logs/.gitkeep
 *.log
 
 # Jupyter
 .ipynb_checkpoints/
+
+# Runtime
+.server.pid
 
 # Cache
 .cache/
