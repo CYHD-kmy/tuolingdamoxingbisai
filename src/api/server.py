@@ -14,7 +14,7 @@ FastAPI 看板服务 — 多页面常驻网站。
     /history    历史记录 (所有运行记录)
     /report     日报 (Markdown 渲染)
 
-API (8 个端点):
+API (9 个端点):
     /api/status /api/decisions /api/candidates /api/analysis
     /api/risk /api/report /api/history /api/trace
 """

@@ -807,7 +807,8 @@ class AKShareFetcher:
         market = "sh" if code.startswith(("6", "9")) else "sz"
         try:
             fn = ak.stock_margin_detail_sh if market == "sh" else ak.stock_margin_detail_sz
-            df = fn(date="")
+            today_str = datetime.now().strftime("%Y%m%d")
+            df = fn(date=today_str)
             if df is None or df.empty:
                 return []
             mask = df["股票代码"].astype(str).str.replace(r"[^0-9]", "", regex=True) == self._normalize_code(code)

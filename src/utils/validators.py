@@ -181,7 +181,7 @@ def validate_and_clip(
                 valid.append(d)
             else:
                 logger.info("validators: %s 跳过 (预算不足)", code)
-            break
+            continue
         else:
             if hasattr(d, "volume"):
                 d.volume = volume

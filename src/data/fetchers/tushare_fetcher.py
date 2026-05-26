@@ -47,7 +47,7 @@ class TushareFetcher:
         api = self._get_api()
         end = datetime.now().strftime("%Y%m%d")
         start = (datetime.now() - timedelta(days=days * 2)).strftime("%Y%m%d")
-        code_ts = f"{code}.SH" if code.startswith("6") else f"{code}.SZ"
+        code_ts = f"{code}.SH" if code.startswith("6") else (f"{code}.BJ" if code.startswith(("4", "8")) else f"{code}.SZ")
 
         df = api.daily(ts_code=code_ts, start_date=start, end_date=end)
         if df is None or df.empty:
