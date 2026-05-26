@@ -50,3 +50,4 @@ class PipelineState:
     stage: str = "init"
     errors: list[str] = field(default_factory=list)
     elapsed: dict[str, float] = field(default_factory=dict)  # {stage: seconds}
+    data_quality: dict[str, str] = field(default_factory=dict)  # {code:data_type → quality}

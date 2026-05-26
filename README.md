@@ -95,13 +95,14 @@ python -m src.api.server
 
 | 模块 | 路径 | 说明 |
 |------|------|------|
-| 数据层 | `src/data/` | 多源降级编排 (AKShare → Tushare → BaoStock) + 缓存 |
+| 数据层 | `src/data/` | 多源降级编排 (AKShare → Tushare → BaoStock) + 缓存 + 数据质量标记 (live/cached/fallback/stale) |
 | 海选筛选 | `src/screening/` | ST/停牌过滤 + 8因子加权打分 |
 | 分析Agent | `src/agents/` | 技术面/基本面/资金面/消息面 四维分析 + 多空辩论 + 管理团队 |
 | 工作流 | `src/graph/` | LangGraph 状态管理 + 流水线编排 |
 | LLM 适配 | `src/llm/` | OpenAI-compatible 客户端 (DeepSeek/OpenAI)，quick/deep 分层 |
 | 输出层 | `src/output/` | JSON 格式化 + 约束校验 + Markdown 日报 + 追踪日志 |
 | Web 看板 | `src/api/` | FastAPI 多页面看板 (首页/看板/历史/日报) + 9个 API 端点 |
+| 降级策略 | `src/agents/fallback.py` | LLM 不可用时确定性规则引擎接管全链路 |
 | 工具 | `src/utils/` | 配置管理 / 交易日历 / 输出校验 |
 
 ## 海选筛选 — 8 因子打分
@@ -221,7 +222,7 @@ Top 20 候选池中每只股票由 4 个分析师**并行**分析（各自使用
 | 场景 | 处理策略 |
 |------|----------|
 | 数据源全部不可用 | 输出空数组 `[]`，标记"数据不可用" |
-| LLM 调用超时 | 降级为确定性规则策略 (纯技术指标) |
+| LLM 调用超时 | 降级为确定性规则引擎 (`fallback.py`): 分析师→规则指标、研究主管→投票、组合主管→保守配置 |
 | 单只股票分析失败 | 跳过该股票，继续分析其他候选 |
 | 组合构建失败 | 输出空数组 `[]`，保留现有持仓 |
 | 当日无符合条件标的 | 输出空数组 `[]` |
@@ -279,7 +280,8 @@ zhitou-future/
 │   ├── agents/                       # Agent 层
 │   │   ├── analysts/                 #   四维分析师
 │   │   ├── researchers/              #   辩论研究员 (多头/空头/引擎)
-│   │   └── managers/                 #   决策主管 (研究/风控/组合)
+│   │   ├── managers/                 #   决策主管 (研究/风控/组合)
+│   │   └── fallback.py              #   LLM 降级: 确定性规则引擎
 │   │
 │   ├── graph/                        # LangGraph 编排
 │   │   ├── state.py                  #   共享状态定义
@@ -304,8 +306,14 @@ zhitou-future/
 │       ├── trading_calendar.py       #   A股交易日历
 │       └── validators.py             #   输出校验
 │
-└── tests/                            # 测试
-    ├── test_screening.py
-    ├── test_validators.py
-    └── test_output.py
+└── tests/                            # 测试 (8 个文件)
+    ├── conftest.py                   #   pytest 配置
+    ├── test_agents.py                #   Agent 层 (风控/辩论/模型/JSON解析)
+    ├── test_api.py                   #   FastAPI 端点
+    ├── test_data.py                  #   数据层 (缓存/模型/代码标准化)
+    ├── test_integration.py           #   端到端 (demo全链路 + 校验)
+    ├── test_llm.py                   #   LLM 客户端/Schema/工厂
+    ├── test_output.py                #   JSON 格式化和校验
+    ├── test_screening.py             #   筛选过滤器
+    └── test_trading_calendar.py      #   交易日历
 ```

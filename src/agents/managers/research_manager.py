@@ -73,7 +73,23 @@ class ResearchManager:
     ) -> ResearchVerdict:
         """
         综合分析和辩论，给出最终研究结论。
+        LLM 不可用时自动降级为简单多数投票。
         """
+        try:
+            return self._decide_with_llm(code, name, reports, debate, current_price)
+        except Exception as e:
+            logger.warning("ResearchManager: LLM 调用失败 (%s)，降级为投票", e)
+            from ..fallback import fallback_verdict
+            return fallback_verdict(code, name, reports, current_price)
+
+    def _decide_with_llm(
+        self,
+        code: str,
+        name: str,
+        reports: list[AnalystReport],
+        debate: DebateResult,
+        current_price: float,
+    ) -> ResearchVerdict:
         report_text = self._format_reports(reports)
         debate_text = debate_result_to_text(debate)
 

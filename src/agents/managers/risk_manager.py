@@ -101,6 +101,22 @@ class RiskManager:
                     final_pct *= 0.5
                     risk_flags.append(f"行业 {industry} 集中度超标")
 
+            # 相关性惩罚: 与已持仓股票高相关 (ρ > 0.7) → ×0.7
+            if current_positions:
+                for held_code, held_shares in current_positions.items():
+                    if held_shares <= 0:
+                        continue
+                    corr = self._calc_correlation(v.code, held_code, daily_data)
+                    if corr > 0.70:
+                        final_pct *= 0.7
+                        risk_flags.append(f"与 {held_code} 高相关 (ρ={corr:.2f})")
+                        break  # 只惩罚一次，取最高相关性
+
+            # 日换手率检查
+            turnover_warning = self._check_turnover(v.code, daily_data)
+            if turnover_warning:
+                risk_flags.append(turnover_warning)
+
             # 计算最大股数 (向下取 100 的整数倍)
             max_value = self._capital * final_pct
             price = self._get_latest_price(v.code, daily_data)
@@ -138,6 +154,31 @@ class RiskManager:
     # ── 辅助 ──────────────────────────────────
 
     @staticmethod
+    def _calc_correlation(code_a: str, code_b: str, daily_data: dict[str, list[Any]]) -> float:
+        """计算两只股票的 Pearson 相关系数 (基于近20日收盘价涨跌幅)"""
+        records_a = daily_data.get(code_a, [])
+        records_b = daily_data.get(code_b, [])
+        if len(records_a) < 10 or len(records_b) < 10:
+            return 0.0
+        # 取两者共有的最短长度
+        n = min(len(records_a), len(records_b), 20)
+        pcts_a = [records_a[-(n - i)].pct_chg for i in range(n)]
+        pcts_b = [records_b[-(n - i)].pct_chg for i in range(n)]
+        return _pearson(pcts_a, pcts_b)
+
+    @staticmethod
+    def _check_turnover(code: str, daily_data: dict[str, list[Any]]) -> str:
+        """检查日换手率是否超限，返回警告信息或空字符串"""
+        records = daily_data.get(code, [])
+        if not records:
+            return ""
+        latest = records[-1]
+        turnover = getattr(latest, "turnover", 0.0)
+        if turnover > 50.0:
+            return f"日换手率 {turnover:.1f}% 过高，流动性风险"
+        return ""
+
+    @staticmethod
     def _calc_volatility(code: str, daily_data: dict[str, list[Any]]) -> float:
         """计算近10日平均绝对涨跌幅 (波动率代理)"""
         records = daily_data.get(code, [])
@@ -157,3 +198,18 @@ class RiskManager:
     def _position_value(code: str, shares: int, daily_data: dict[str, list[Any]]) -> float:
         price = RiskManager._get_latest_price(code, daily_data)
         return price * shares
+
+
+def _pearson(x: list[float], y: list[float]) -> float:
+    """计算 Pearson 相关系数"""
+    n = len(x)
+    if n < 2:
+        return 0.0
+    mean_x = sum(x) / n
+    mean_y = sum(y) / n
+    cov = sum((xi - mean_x) * (yi - mean_y) for xi, yi in zip(x, y))
+    std_x = (sum((xi - mean_x) ** 2 for xi in x) ** 0.5)
+    std_y = (sum((yi - mean_y) ** 2 for yi in y) ** 0.5)
+    if std_x < 1e-9 or std_y < 1e-9:
+        return 0.0
+    return round(cov / (std_x * std_y), 4)

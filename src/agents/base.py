@@ -106,9 +106,20 @@ class BaseAnalyst(ABC):
         执行分析: 上下文 → LLM(Tool Calling) → 解析 → 报告。
         先使用系统提示词和数据上下文请求 LLM 进行分析。
         如果模型判断需要更多数据，它会通过 Tool Calling 请求。
+        LLM 不可用时自动降级为确定性规则引擎。
         """
         name = self._data.get_stock_name(code)
 
+        try:
+            return self._analyze_with_llm(code, name)
+        except Exception as e:
+            logger.warning(
+                "%s: LLM 调用失败 (%s)，降级为确定性规则", self.analyst_type, e,
+            )
+            return self._fallback_report(code, name)
+
+    def _analyze_with_llm(self, code: str, name: str) -> AnalystReport:
+        """LLM 驱动的分析流程"""
         # 构建上下文
         context = self.build_context(code)
 
@@ -158,6 +169,34 @@ class BaseAnalyst(ABC):
         # 最后再请求一次 LLM 给出最终报告
         final_resp = self._llm.chat(messages, tools=None)
         return self._parse_report(final_resp.content, code, name)
+
+    def _fallback_report(self, code: str, name: str) -> AnalystReport:
+        """LLM 不可用时使用确定性规则引擎生成报告"""
+        from .fallback import (
+            fallback_technical_report,
+            fallback_fundamentals_report,
+            fallback_fund_flow_report,
+            fallback_news_report,
+        )
+        fallback_map = {
+            "technical": fallback_technical_report,
+            "fundamentals": fallback_fundamentals_report,
+            "fund_flow": fallback_fund_flow_report,
+            "news": fallback_news_report,
+        }
+        fn = fallback_map.get(self.analyst_type)
+        if fn:
+            report = fn(code, name, self._data)
+            logger.info(
+                "%s: %s %s → %s [降级] (置信度:%.2f)",
+                self.analyst_type, code, name, report.signal, report.confidence,
+            )
+            return report
+        return AnalystReport(
+            analyst_type=self.analyst_type, code=code, name=name,
+            signal="neutral", confidence=0.30,
+            reasoning="[降级] LLM 不可用，无确定性规则覆盖",
+        )
 
     # ── 工具执行 ──────────────────────────────
 

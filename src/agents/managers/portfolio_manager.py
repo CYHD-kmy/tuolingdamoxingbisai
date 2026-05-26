@@ -80,7 +80,27 @@ class PortfolioManager:
         daily_data: 日线数据 (用于获取最新价格)
         cash_available: 当前可用资金
         total_capital: 总资金 (用于计算比例)
+
+        LLM 不可用时自动降级为确定性规则。
         """
+        try:
+            return self._construct_with_llm(
+                verdicts, limits, daily_data, cash_available, total_capital,
+            )
+        except Exception as e:
+            logger.warning("PortfolioManager: LLM 调用失败 (%s)，降级为确定性规则", e)
+            from ..fallback import fallback_portfolio
+            return fallback_portfolio(verdicts, limits, daily_data, cash_available, total_capital)
+
+    def _construct_with_llm(
+        self,
+        verdicts: list[ResearchVerdict],
+        limits: dict[str, PositionLimit],
+        daily_data: dict[str, list],
+        cash_available: float,
+        total_capital: float,
+    ) -> PortfolioResult:
+        """LLM 驱动的组合构建"""
         # 筛选有买入信号的标的
         buy_candidates = [
             (v, limits[v.code])

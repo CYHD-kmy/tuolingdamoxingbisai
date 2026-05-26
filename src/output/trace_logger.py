@@ -97,7 +97,7 @@ def build_trace(state: PipelineState, total_elapsed: float) -> dict[str, Any]:
     decisions = [d.to_dict() for d in (state.final_result.decisions if state.final_result else [])]
 
     return {
-        "pipeline_version": "1.0.0",
+        "pipeline_version": "1.1.0",
         "date": date_str,
         "timestamp": datetime.now().isoformat(),
         "total_capital": state.total_capital,
@@ -114,6 +114,7 @@ def build_trace(state: PipelineState, total_elapsed: float) -> dict[str, Any]:
         "verdicts": verdicts,
         "risk": risk_limits,
         "decisions": decisions,
+        "data_quality": state.data_quality,
         "errors": state.errors,
         "portfolio": {
             "cash_used": state.final_result.cash_used if state.final_result else 0,

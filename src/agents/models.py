@@ -70,7 +70,10 @@ class FinalDecision:
     entry_price: float = 0.0  # 入场价格，用于计算浮动盈亏
 
     def to_dict(self) -> dict:
-        return {"symbol": self.symbol, "symbol_name": self.symbol_name, "volume": self.volume}
+        d = {"symbol": self.symbol, "symbol_name": self.symbol_name, "volume": self.volume}
+        if self.entry_price > 0:
+            d["entry_price"] = self.entry_price
+        return d
 
 
 @dataclass

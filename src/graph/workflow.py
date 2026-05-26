@@ -64,6 +64,14 @@ def run_screening(state: PipelineState) -> dict[str, Any]:
         if codes:
             updates["daily_data"] = data.batch_daily_data(codes, days=30, max_workers=6)
             updates["fund_flows"] = data.batch_fund_flows(codes, days=5, max_workers=6)
+            # 捕获数据质量标记
+            quality: dict[str, str] = {}
+            for c in codes:
+                for dt in ("daily", "fund_flow"):
+                    q = data.get_data_quality(c, dt)
+                    if q:
+                        quality[f"{c}:{dt}"] = q
+            updates["data_quality"] = quality
 
         updates["stage"] = "screening_done"
         logger.info("筛选完成: %d 只候选", len(result.candidates))
@@ -330,7 +338,18 @@ def run_pipeline(total_capital: float = 500_000.0) -> PipelineState:
 # ── 辅助 ──────────────────────────────────────
 
 def _build_current_positions(state: PipelineState) -> dict[str, int]:
-    """从已有最终结果中提取当前持仓 {code: shares}"""
+    """加载当前持仓: 优先从上一交易日 trace 文件读取，否则返回空"""
+    from ..output.trace_logger import load_trace
+    from ..utils.trading_calendar import prev_trading_day
+    from datetime import datetime
+
+    prev_day = prev_trading_day(datetime.now())
+    prev_trace = load_trace(prev_day.strftime("%Y%m%d"))
+    if prev_trace:
+        decisions = prev_trace.get("decisions", [])
+        return {d["symbol"]: d["volume"] for d in decisions if d.get("volume", 0) > 0}
+
+    # 回退: 使用当前状态 (仅 re-run 场景有效)
     if state.final_result and state.final_result.decisions:
         return {d.symbol: d.volume for d in state.final_result.decisions}
     return {}

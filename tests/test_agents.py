@@ -89,6 +89,18 @@ def test_final_decision_to_dict():
     assert result == {"symbol": "600519", "symbol_name": "茅台", "volume": 200}
 
 
+def test_final_decision_to_dict_with_entry_price():
+    """entry_price > 0 时 to_dict() 包含入场价"""
+    d = FinalDecision(symbol="600519", symbol_name="茅台", volume=200, entry_price=1680.50)
+    result = d.to_dict()
+    assert result == {"symbol": "600519", "symbol_name": "茅台", "volume": 200, "entry_price": 1680.50}
+
+    # entry_price=0 时不输出该字段
+    d2 = FinalDecision(symbol="000858", symbol_name="五粮液", volume=500, entry_price=0.0)
+    result2 = d2.to_dict()
+    assert "entry_price" not in result2
+
+
 def test_position_limit_defaults():
     """PositionLimit 默认值"""
     limit = PositionLimit(code="600519", name="茅台",
@@ -191,6 +203,7 @@ if __name__ == "__main__":
     test_risk_manager_high_volatility()
     test_risk_manager_drawdown_check()
     test_final_decision_to_dict()
+    test_final_decision_to_dict_with_entry_price()
     test_position_limit_defaults()
     test_debate_result_rounds()
     test_analyst_report_from_json()

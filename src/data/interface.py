@@ -69,6 +69,25 @@ class UnifiedDataInterface:
         self._config = get_config()
         self._cache = DataCache()
         self._fetchers = _build_fetchers(self._config)
+        self._quality: dict[str, str] = {}  # key: "code:data_type" → quality_level
+
+    # ── 数据质量 ─────────────────────────────
+
+    _QUALITY_LIVE = "live"
+    _QUALITY_CACHED = "cached"
+    _QUALITY_FALLBACK = "fallback"
+    _QUALITY_STALE = "stale"
+
+    def get_data_quality(self, code: str, data_type: str) -> str:
+        """查询某只股票某类数据的质量等级 (live/cached/fallback/stale)"""
+        return self._quality.get(f"{code}:{data_type}", "")
+
+    def get_batch_quality(self, codes: list[str], data_type: str) -> dict[str, str]:
+        """批量查询数据质量 {code: quality_level}"""
+        return {c: self._quality.get(f"{c}:{data_type}", "") for c in codes}
+
+    def _set_quality(self, code: str, data_type: str, level: str) -> None:
+        self._quality[f"{code}:{data_type}"] = level
 
     # ── 公开 API ─────────────────────────────
 
@@ -83,13 +102,17 @@ class UnifiedDataInterface:
         if not force_refresh:
             cached = self._cache.daily_data(code)
             if cached is not None:
+                self._set_quality(code, "daily", self._QUALITY_CACHED)
                 return cached
 
+        primary = self._fetchers[0].name if self._fetchers else ""
         for fetcher in self._fetchers:
             try:
                 data = fetcher.get_daily_data(code, days)
                 if data:
                     self._cache.set_daily_data(code, data)
+                    level = self._QUALITY_LIVE if fetcher.name == primary else self._QUALITY_FALLBACK
+                    self._set_quality(code, "daily", level)
                     return data
             except Exception:
                 logger.debug("%s: get_daily_data 失败, 尝试下一个", fetcher.name)
@@ -99,6 +122,7 @@ class UnifiedDataInterface:
         stale = self._cache.daily_data(code)
         if stale is not None:
             logger.warning("%s: 所有数据源失败，使用过期缓存", code)
+            self._set_quality(code, "daily", self._QUALITY_STALE)
             return stale
 
         logger.error("%s: 所有数据源均失败，无数据可用", code)
@@ -108,13 +132,17 @@ class UnifiedDataInterface:
         """获取实时行情"""
         cached = self._cache.realtime_quote(code)
         if cached is not None:
+            self._set_quality(code, "realtime", self._QUALITY_CACHED)
             return cached
 
+        primary = self._fetchers[0].name if self._fetchers else ""
         for fetcher in self._fetchers:
             try:
                 quote = fetcher.get_realtime_quote(code)
                 if quote is not None and quote.price > 0:
                     self._cache.set_realtime_quote(code, quote)
+                    level = self._QUALITY_LIVE if fetcher.name == primary else self._QUALITY_FALLBACK
+                    self._set_quality(code, "realtime", level)
                     return quote
             except Exception:
                 logger.debug("%s: get_realtime_quote 失败", fetcher.name)
@@ -151,10 +179,13 @@ class UnifiedDataInterface:
 
     def get_fund_flow(self, code: str, days: int = 5) -> list[FundFlow]:
         """获取近期资金流向"""
+        primary = self._fetchers[0].name if self._fetchers else ""
         for fetcher in self._fetchers:
             try:
                 flows = fetcher.get_fund_flow(code, days)
                 if flows:
+                    level = self._QUALITY_LIVE if fetcher.name == primary else self._QUALITY_FALLBACK
+                    self._set_quality(code, "fund_flow", level)
                     return flows
             except Exception:
                 continue
@@ -162,10 +193,13 @@ class UnifiedDataInterface:
 
     def get_market_snapshot(self) -> list[MarketSnapshot]:
         """获取全市场快照 (按成交额降序 Top 3000)"""
+        primary = self._fetchers[0].name if self._fetchers else ""
         for fetcher in self._fetchers:
             try:
                 snapshot = fetcher.get_market_snapshot()
                 if snapshot:
+                    level = self._QUALITY_LIVE if fetcher.name == primary else self._QUALITY_FALLBACK
+                    self._set_quality("__market__", "snapshot", level)
                     return snapshot
             except Exception:
                 continue
@@ -173,10 +207,13 @@ class UnifiedDataInterface:
 
     def get_news(self, keyword: str, days: int = 3) -> list[dict]:
         """新闻搜索"""
+        primary = self._fetchers[0].name if self._fetchers else ""
         for fetcher in self._fetchers:
             try:
                 result = fetcher.get_news(keyword, days)
                 if result:
+                    level = self._QUALITY_LIVE if fetcher.name == primary else self._QUALITY_FALLBACK
+                    self._set_quality(keyword, "news", level)
                     return result
             except Exception:
                 continue
@@ -184,10 +221,13 @@ class UnifiedDataInterface:
 
     def get_announcements(self, code: str, days: int = 7) -> list[dict]:
         """个股公告"""
+        primary = self._fetchers[0].name if self._fetchers else ""
         for fetcher in self._fetchers:
             try:
                 result = fetcher.get_announcements(code, days)
                 if result:
+                    level = self._QUALITY_LIVE if fetcher.name == primary else self._QUALITY_FALLBACK
+                    self._set_quality(code, "announcements", level)
                     return result
             except Exception:
                 continue
