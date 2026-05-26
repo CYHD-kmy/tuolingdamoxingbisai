@@ -10,8 +10,6 @@
 
 from __future__ import annotations
 
-from typing import Any
-
 from ..base import BaseAnalyst
 from ..tools import tools_for
 from ...llm.schema import Tool

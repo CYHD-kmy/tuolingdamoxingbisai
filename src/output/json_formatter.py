@@ -10,7 +10,7 @@ import logging
 from typing import Any
 
 from ..agents.models import FinalDecision, PositionLimit
-from ..utils.validators import validate_and_clip, LOT_SIZE
+from ..utils.validators import validate_and_clip
 
 logger = logging.getLogger(__name__)
 

@@ -77,6 +77,7 @@ def test_validate_budget_exceeded():
         cash_available=500_000, total_capital=500_000,
     )
     # 10000 * 100 = 1,000,000 > 500,000，应该被裁剪
+    assert len(result) >= 1, "应有至少1笔决策被裁剪后保留"
     for d in result:
         assert d.volume * 100 <= 500_000 * 0.9  # 留10%现金
 

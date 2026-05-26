@@ -7,7 +7,6 @@ LLM 客户端 — OpenAI-compatible API 调用。
 
 from __future__ import annotations
 
-import json
 import logging
 import time
 from typing import Any

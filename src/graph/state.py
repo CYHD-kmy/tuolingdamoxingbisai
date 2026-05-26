@@ -12,7 +12,7 @@ from typing import Any
 from ..screening.scorer import FactorScore
 from ..agents.base import AnalystReport
 from ..agents.models import (
-    DebateResult, ResearchVerdict, PositionLimit, FinalDecision, PortfolioResult,
+    DebateResult, ResearchVerdict, PositionLimit, PortfolioResult,
 )
 
 

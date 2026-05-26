@@ -10,7 +10,6 @@ import json
 import logging
 import os
 from datetime import datetime
-from pathlib import Path
 from typing import Any
 
 from ..graph.state import PipelineState
@@ -29,7 +28,8 @@ def build_trace(state: PipelineState, total_elapsed: float) -> dict[str, Any]:
             "code": c.code, "name": c.name, "score": c.composite,
             **{k: c.scores.get(k, 0)
                for k in ["trend", "momentum", "volume_price",
-                         "capital_flow", "sentiment", "quality", "risk", "liquidity"]}
+                         "capital_flow", "northbound", "sentiment", "quality",
+                         "risk", "liquidity", "shareholder_conc"]}
         }
         for c in state.candidates
     ]

@@ -169,15 +169,19 @@ class RiskManager:
 
     @staticmethod
     def _calc_correlation(code_a: str, code_b: str, daily_data: dict[str, list[Any]]) -> float:
-        """计算两只股票的 Pearson 相关系数 (基于近20日收盘价涨跌幅)"""
+        """计算两只股票的 Pearson 相关系数 (基于近20日收盘价涨跌幅，按日期对齐)"""
         records_a = daily_data.get(code_a, [])
         records_b = daily_data.get(code_b, [])
         if len(records_a) < 10 or len(records_b) < 10:
             return 0.0
-        # 取两者共有的最短长度
-        n = min(len(records_a), len(records_b), 20)
-        pcts_a = [records_a[-(n - i)].pct_chg for i in range(n)]
-        pcts_b = [records_b[-(n - i)].pct_chg for i in range(n)]
+
+        dates_a = {r.date: r.pct_chg for r in records_a[-30:]}
+        dates_b = {r.date: r.pct_chg for r in records_b[-30:]}
+        common = sorted(set(dates_a) & set(dates_b))[-20:]
+        if len(common) < 10:
+            return 0.0
+        pcts_a = [dates_a[d] for d in common]
+        pcts_b = [dates_b[d] for d in common]
         return _pearson(pcts_a, pcts_b)
 
     @staticmethod
