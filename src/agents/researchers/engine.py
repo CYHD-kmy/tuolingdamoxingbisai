@@ -47,6 +47,7 @@ class DebateEngine:
 
         reports: 四份分析师报告
         max_rounds: 最大辩论轮数 (默认3轮)
+        当检测到论点收敛时提前终止 (连续两轮相似度 > 阈值)。
 
         返回: 完整辩论记录
         """
@@ -55,6 +56,8 @@ class DebateEngine:
         bull_argument = ""
         bear_argument = ""
         bull_rebuttal = ""
+        prev_bear_response = ""
+        prev_bull_rebuttal = ""
 
         for rnd in range(1, max_rounds + 1):
             logger.info("辩论: %s %s 第%d轮", code, name, rnd)
@@ -77,19 +80,54 @@ class DebateEngine:
                     bull_argument=bull_argument,
                     bear_argument=bear_argument,
                 ))
+                prev_bear_response = bear_response
             else:
                 result.rounds.append(DebateRound(
                     round_num=rnd,
                     bull_argument=bull_rebuttal,
                     bear_argument=bear_response,
                 ))
+
+                # 收敛检测: 连续两轮论点高度重复 → 提前终止
+                if rnd >= 2:
+                    bull_sim = _text_similarity(prev_bull_rebuttal, bull_rebuttal)
+                    bear_sim = _text_similarity(prev_bear_response, bear_response)
+                    if bull_sim > 0.75 and bear_sim > 0.75:
+                        logger.info(
+                            "辩论收敛: %s %s 第%d轮后终止 (bull_sim=%.2f bear_sim=%.2f)",
+                            code, name, rnd, bull_sim, bear_sim,
+                        )
+                        break
+
                 # 推进论点: 当前轮的新观点成为下一轮的起始基线
                 bull_argument = bull_rebuttal
                 bear_argument = bear_response
+                prev_bull_rebuttal = bull_rebuttal
+                prev_bear_response = bear_response
 
         result.total_rounds = len(result.rounds)
         logger.info("辩论完成: %s %s 共%d轮", code, name, result.total_rounds)
         return result
+
+
+def _text_similarity(a: str, b: str) -> float:
+    """计算两段中文文本的字符级 bigram 重叠相似度 (0.0-1.0)。"""
+    if not a or not b:
+        return 0.0
+
+    def bigrams(s: str) -> set[str]:
+        s = s.replace("\n", "").replace(" ", "")
+        if len(s) < 2:
+            return {s}
+        return {s[i:i + 2] for i in range(len(s) - 1)}
+
+    bg_a = bigrams(a)
+    bg_b = bigrams(b)
+    if not bg_a or not bg_b:
+        return 0.0
+    intersection = bg_a & bg_b
+    union = bg_a | bg_b
+    return len(intersection) / len(union)
 
 
 def debate_result_to_text(result: DebateResult) -> str:

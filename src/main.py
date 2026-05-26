@@ -134,7 +134,34 @@ def main(demo: bool = False) -> None:
         trace_path = save_trace(state, total_elapsed, config.results_dir)
         logger.info("结果已保存: %s", trace_path)
 
-        report_md = generate_daily_report(state)
+        # ChromaDB 记忆索引 (异步最佳努力)
+        try:
+            from src.memory import MemoryStore
+            memory = MemoryStore()
+            if memory.available:
+                trace_data = json.loads(open(trace_path, encoding="utf-8").read())
+                memory.index_trace(trace_data)
+                logger.info("记忆已索引: %d 条记录", memory.count())
+        except Exception:
+            logger.debug("记忆索引跳过 (chromadb 不可用或索引失败)", exc_info=True)
+
+        # 持久化持仓
+        from src.agents.portfolio_tracker import PortfolioTracker
+
+        tracker = PortfolioTracker(total_capital=config.initial_capital, results_dir=config.results_dir)
+        tracker.load()
+        tracker.apply_decisions(
+            state.final_result.decisions if state.final_result else [],
+            state.daily_data,
+        )
+        tracker.update_prices(state.daily_data)
+        tracker.record_daily()
+        tracker.save()
+        logger.info("持仓已保存: %.0f%% 仓位, 累计盈亏 ¥%.0f",
+                    tracker.total_market_value() / config.initial_capital * 100,
+                    tracker.cumulative_pnl)
+
+        report_md = generate_daily_report(state, tracker)
         date_str = datetime.now().strftime("%Y%m%d")
         report_path = os.path.join(config.results_dir, f"report_{date_str}.md")
         with open(report_path, "w", encoding="utf-8") as f:
@@ -145,5 +172,69 @@ def main(demo: bool = False) -> None:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="智投未来 — A股日内投资智能体")
     parser.add_argument("--demo", action="store_true", help="使用演示数据运行 (无需网络和 LLM API Key)")
+    parser.add_argument("--strategy", default="default",
+                        help="策略选择: default / momentum / mean_reversion / quality / sentiment / all")
+    parser.add_argument("--backtest", nargs=2, metavar=("START", "END"),
+                        help="回测模式: 指定起始和结束日期 YYYYMMDD")
+    parser.add_argument("--benchmark", default="000300", help="回测基准指数代码 (默认 000300)")
+    parser.add_argument("--rl-train", action="store_true", help="训练 RL 模型")
+    parser.add_argument("--rl-model", type=str, default="", help="RL 模型路径 (推断模式)")
+    parser.add_argument("--rl-episodes", type=int, default=200, help="RL 训练轮数")
     args = parser.parse_args()
+
+    if args.backtest:
+        import logging
+        logging.basicConfig(
+            level=logging.INFO,
+            format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+            datefmt="%H:%M:%S",
+        )
+        logger = logging.getLogger("backtest")
+        from src.backtesting import BacktestEngine, BacktestConfig
+        from src.backtesting.report import generate_backtest_report
+
+        config = BacktestConfig(
+            start_date=args.backtest[0],
+            end_date=args.backtest[1],
+            initial_capital=get_config().initial_capital,
+            benchmark=args.benchmark,
+        )
+        engine = BacktestEngine(config)
+        result = engine.run()
+        report_prefix = generate_backtest_report(result, get_config().backtest_output_dir)
+        logger.info("回测完成，报告已保存: %s", report_prefix)
+        print(f"\n===== 回测绩效 =====")
+        print(f"总收益率:   {result.metrics.total_return * 100:+.2f}%")
+        print(f"年化收益率: {result.metrics.annualized_return * 100:+.2f}%")
+        print(f"Sharpe:     {result.metrics.sharpe_ratio:.2f}")
+        print(f"最大回撤:   {result.metrics.max_drawdown * 100:.2f}%")
+        print(f"Calmar:     {result.metrics.calmar_ratio:.2f}")
+        print(f"胜率:       {result.metrics.win_rate * 100:.1f}%")
+        print(f"盈亏比:     {result.metrics.profit_factor:.2f}")
+        print(f"最终权益:   ¥{result.final_equity:,.0f}")
+        sys.exit(0)
+
+    if args.rl_train:
+        import logging
+        logging.basicConfig(
+            level=logging.INFO,
+            format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+            datefmt="%H:%M:%S",
+        )
+        logger = logging.getLogger("rl")
+        from src.rl.agent import DQNAgent
+        from src.rl.trainer import train_rl_agent
+        from src.demo import _make_daily_data, _SAMPLE_STOCKS
+
+        logger.info("开始 RL 训练 (%d episodes)...", args.rl_episodes)
+        daily_data = _make_daily_data()
+        codes = [s[0] for s in _SAMPLE_STOCKS]
+        agent = train_rl_agent(codes, daily_data, episodes=args.rl_episodes)
+        model_path = args.rl_model or os.path.join(get_config().results_dir, "rl_model.json")
+        agent.save(model_path)
+        logger.info("RL 模型已保存: %s", model_path)
+        logger.info("训练完成: epsilon=%.4f total_reward=%.2f",
+                    agent.epsilon, agent._total_reward)
+        sys.exit(0)
+
     main(demo=args.demo)

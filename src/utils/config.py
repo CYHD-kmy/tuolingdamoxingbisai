@@ -82,6 +82,28 @@ class Config:
     max_debate_rounds: int = 3
     max_analyst_tool_calls: int = 3
 
+    # ── 回测 ────────────────────────────────────
+    backtest_start_date: str = ""
+    backtest_end_date: str = ""
+    backtest_benchmark: str = "000300"
+    backtest_output_dir: str = field(
+        default_factory=lambda: str(_project_root() / "results" / "backtests")
+    )
+
+    # ── 组合优化 ──────────────────────────────
+    risk_parity_method: str = "equal"  # equal / erc / min_var / max_div
+    risk_parity_lookback: int = 20
+
+    # ── 多策略 ──────────────────────────────────
+    active_strategies: str = "default"  # 逗号分隔: default,momentum,mean_reversion,quality,sentiment
+    strategy_rebalance_period: int = 10
+
+    # ── 强化学习 ──────────────────────────────
+    rl_enabled: bool = False
+    rl_model_path: str = ""
+    rl_episodes: int = 200
+    rl_signal_weight: float = 0.15
+
     # ── 输出 ────────────────────────────────────
     results_dir: str = field(
         default_factory=lambda: str(_project_root() / "results")

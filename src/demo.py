@@ -116,8 +116,8 @@ def _make_daily_data() -> dict[str, list]:
     data: dict[str, list] = {}
     for code, name, price, pct, _vr, turnover, amount, _pe, _mv in _SAMPLE_STOCKS:
         days = []
-        base = price * 0.88  # 20天前大约 -12%
-        for i in range(20):
+        base = price * 0.82  # 30天前大约 -18%
+        for i in range(30):
             d = StockDaily(
                 date=f"2026-05-{i+1:02d}",
                 open=round(base, 2),

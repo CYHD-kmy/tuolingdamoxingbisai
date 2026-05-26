@@ -23,7 +23,7 @@
   │   UnifiedDataInterface  统一数据接口 + 缓存
   │
   ├─ 分析层 (Analysis Layer)
-  │   阶段一: 海选筛选  5000+ → 8因子打分 → Top 20
+  │   阶段一: 海选筛选  5000+ → 10因子打分 → Top 20
   │   阶段二: 深度分析  四维分析师 (技术/基本/资金/消息) × quick LLM
   │   阶段三: 辩论对抗  多头 ↔ 空头 (max 3轮) → 研究主管 (deep LLM)
   │
@@ -52,6 +52,12 @@ python -m src.main --demo
 
 # 4. 运行 (正常模式)
 python -m src.main
+
+# 5. 高级功能
+python -m src.main --backtest 20260501 20260526       # 历史回测
+python -m src.main --strategy momentum,quality         # 多策略竞争
+python -m src.main --rl-train --rl-episodes 200        # RL 训练
+python -m src.main --rl-model results/rl_model.json    # RL 推断
 ```
 
 ### 启动 Web 看板
@@ -96,13 +102,20 @@ python -m src.api.server
 | 模块 | 路径 | 说明 |
 |------|------|------|
 | 数据层 | `src/data/` | 多源降级编排 (AKShare → Tushare → BaoStock) + 缓存 + 数据质量标记 (live/cached/fallback/stale) |
-| 海选筛选 | `src/screening/` | ST/停牌过滤 + 8因子加权打分 |
+| 海选筛选 | `src/screening/` | ST/停牌/新股过滤 + 10因子加权打分 + ETF筛选 |
 | 分析Agent | `src/agents/` | 技术面/基本面/资金面/消息面 四维分析 + 多空辩论 + 管理团队 |
 | 工作流 | `src/graph/` | LangGraph 状态管理 + 流水线编排 |
 | LLM 适配 | `src/llm/` | OpenAI-compatible 客户端 (DeepSeek/OpenAI)，quick/deep 分层 |
 | 输出层 | `src/output/` | JSON 格式化 + 约束校验 + Markdown 日报 + 追踪日志 |
 | Web 看板 | `src/api/` | FastAPI 多页面看板 (首页/看板/历史/日报) + 9个 API 端点 |
 | 降级策略 | `src/agents/fallback.py` | LLM 不可用时确定性规则引擎接管全链路 |
+| 持仓追踪 | `src/agents/portfolio_tracker.py` | 跨交易日持仓管理: 成本基价/浮动盈亏/行业暴露/日收益历史 |
+| 盘中监控 | `src/monitoring/` | 30s轮询: 止损(-7%)/止盈(+15%)/熔断(-5%)/Webhook告警 |
+| 记忆系统 | `src/memory/` | ChromaDB 向量存储: 历史行情索引/相似检索/置信度校准 |
+| 回测框架 | `src/backtesting/` | 历史回放: Sharpe/MaxDD/Calmar/ProfitFactor + JSON+MD报告 |
+| 组合优化 | `src/optimization/` | 风险平价(ERC)/最小方差/最大分散化 三种权重分配方法 |
+| 多策略 | `src/strategies/` | 5种Alpha策略并行竞争: 动量/均值回归/质量/情绪/默认10因子 |
+| 强化学习 | `src/rl/` | DQN智能体: 手动神经网络 + 经验回放 + 交易环境, 无PyTorch依赖 |
 | 工具 | `src/utils/` | 配置管理 / 交易日历 / 输出校验 |
 
 ## 海选筛选 — 10 因子打分
@@ -248,11 +261,12 @@ Top 20 候选池中每只股票由 4 个分析师**并行**分析（各自使用
 
 ## 迭代路线
 
-| 阶段 | 内容 |
-|------|------|
-| **第一阶段 (MVP)** | 数据管道 + 四分析师 + 辩论 + 风控 + JSON 输出 + Web 看板 |
-| **第二阶段 (增强)** | ChromaDB 记忆系统、盘中实时监控与动态调仓、ETF 策略 |
-| **第三阶段 (进化)** | 强化学习优化权重、多策略并行竞赛、风险平价仓位优化 |
+| 阶段 | 内容 | 状态 |
+|------|------|------|
+| **第一阶段 (MVP)** | 数据管道 + 四分析师 + 辩论 + 风控 + JSON 输出 + Web 看板 | 已完成 |
+| **第二阶段 (增强)** | ChromaDB 记忆系统、盘中实时监控、ETF 策略、持仓追踪 | 已完成 |
+| **第三阶段 (进化)** | 回测框架、风险平价优化、多策略竞争引擎、DQN 强化学习 | 已完成 |
+| **第四阶段 (前沿)** | 实盘接入、多资产扩展、Transformer时序模型 | 规划中 |
 
 ## 目录结构
 
@@ -280,10 +294,11 @@ zhitou-future/
 │   │   └── filters.py                #   ST/停牌/流动性过滤
 │   │
 │   ├── agents/                       # Agent 层
-│   │   ├── analysts/                 #   四维分析师
-│   │   ├── researchers/              #   辩论研究员 (多头/空头/引擎)
+│   │   ├── analysts/                 #   四维分析师 + ETF分析师
+│   │   ├── researchers/              #   辩论研究员 (多头/空头/引擎, bigram收敛检测)
 │   │   ├── managers/                 #   决策主管 (研究/风控/组合)
-│   │   └── fallback.py              #   LLM 降级: 确定性规则引擎
+│   │   ├── fallback.py              #   LLM 降级: 确定性规则引擎
+│   │   └── portfolio_tracker.py     #   跨日持仓追踪 (成本/盈亏/行业暴露)
 │   │
 │   ├── graph/                        # LangGraph 编排
 │   │   ├── state.py                  #   共享状态定义
@@ -291,11 +306,47 @@ zhitou-future/
 │   │
 │   ├── llm/                          # LLM 适配层
 │   │   ├── factory.py                #   模型工厂
-│   │   ├── client.py                 #   OpenAI-compatible 客户端
+│   │   ├── client.py                 #   OpenAI-compatible 客户端 (全局并发限流)
 │   │   └── schema.py                 #   LLM 输出 Schema
 │   │
+│   ├── screening/                    # 海选筛选
+│   │   ├── pipeline.py               #   筛选管道
+│   │   ├── scorer.py                 #   10因子打分
+│   │   ├── filters.py                #   ST/停牌/新股/流动性过滤
+│   │   └── etf_screener.py           #   ETF 筛选器
+│   │
+│   ├── backtesting/                  # 回测框架
+│   │   ├── engine.py                 #   逐日历史回放引擎
+│   │   ├── metrics.py                #   绩效指标 (Sharpe/MaxDD/Calmar)
+│   │   └── report.py                 #   JSON+MD 双格式报告
+│   │
+│   ├── optimization/                 # 组合优化
+│   │   └── risk_parity.py            #   ERC/MinVar/MaxDiv 权重分配
+│   │
+│   ├── strategies/                   # 多策略竞争
+│   │   ├── engine.py                 #   并行竞争引擎 + 软投票合并
+│   │   ├── base.py                   #   策略基类
+│   │   ├── registry.py               #   策略注册表
+│   │   ├── momentum.py               #   趋势动量策略
+│   │   ├── mean_reversion.py         #   均值回归策略
+│   │   ├── quality.py                #   质量价值策略
+│   │   ├── sentiment.py              #   情绪资金策略
+│   │   └── default_strategy.py       #   默认10因子策略
+│   │
+│   ├── rl/                           # 强化学习
+│   │   ├── agent.py                  #   DQN智能体 + SimpleNN (手动BP)
+│   │   ├── environment.py            #   Gym风格交易环境
+│   │   ├── features.py               #   7维技术特征提取
+│   │   └── trainer.py                #   跨股票训练器
+│   │
+│   ├── monitoring/                   # 盘中监控
+│   │   └── monitor.py                #   止损/止盈/熔断 + Webhook告警
+│   │
+│   ├── memory/                       # 向量记忆
+│   │   └── __init__.py              #   ChromaDB 历史行情索引
+│   │
 │   ├── api/                          # Web 看板
-│   │   ├── server.py                 #   FastAPI 服务
+│   │   ├── server.py                 #   FastAPI 服务 (9端点 + 4页面)
 │   │   └── static/                   #   前端页面 (HTML/CSS/JS)
 │   │
 │   ├── output/                       # 输出层
@@ -308,14 +359,18 @@ zhitou-future/
 │       ├── trading_calendar.py       #   A股交易日历
 │       └── validators.py             #   输出校验
 │
-└── tests/                            # 测试 (8 个文件)
+└── tests/                            # 测试 (122 tests, 12 个文件)
     ├── conftest.py                   #   pytest 配置
     ├── test_agents.py                #   Agent 层 (风控/辩论/模型/JSON解析)
     ├── test_api.py                   #   FastAPI 端点
+    ├── test_backtesting.py           #   回测 (Sharpe/MaxDD/引擎/报告)
     ├── test_data.py                  #   数据层 (缓存/模型/代码标准化)
     ├── test_integration.py           #   端到端 (demo全链路 + 校验)
     ├── test_llm.py                   #   LLM 客户端/Schema/工厂
+    ├── test_optimization.py          #   风险平价 (ERC/MinVar/MaxDiv)
     ├── test_output.py                #   JSON 格式化和校验
+    ├── test_rl.py                    #   强化学习 (环境/DQN/特征/训练)
     ├── test_screening.py             #   筛选过滤器
+    ├── test_strategies.py            #   多策略 (动量/回归/质量/情绪/引擎)
     └── test_trading_calendar.py      #   交易日历
 ```

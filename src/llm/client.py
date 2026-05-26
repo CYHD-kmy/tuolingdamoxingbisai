@@ -2,12 +2,14 @@
 LLM 客户端 — OpenAI-compatible API 调用。
 
 支持 OpenAI / DeepSeek / 及其他兼容提供商。
-提供: 自动重试、连接池、Tool Calling、Token 统计。
+提供: 自动重试、连接池、Tool Calling、全局速率控制。
 """
 
 from __future__ import annotations
 
 import logging
+import os
+import threading
 import time
 from typing import Any
 
@@ -16,6 +18,11 @@ import requests
 from .schema import LLMResponse, Message, Tool, ToolCall
 
 logger = logging.getLogger(__name__)
+
+# 全局并发控制 (避免多线程同时打爆 API 限流)
+_LLM_SEMAPHORE = threading.BoundedSemaphore(
+    int(os.getenv("LLM_MAX_CONCURRENT", "5"))
+)
 
 
 class LLMClient:
@@ -69,9 +76,17 @@ class LLMClient:
 
         messages: 对话历史 (system → user → assistant → ...)
         tools:    可选的工具定义列表
+
+        受全局信号量控制，避免并发过高触发 API 限流。
         """
         payload = self._build_payload(messages, tools, temperature, max_tokens)
-        return self._call_with_retry(payload)
+        acquired = _LLM_SEMAPHORE.acquire(timeout=self._timeout)
+        if not acquired:
+            raise RuntimeError("LLM 并发超限，无法获取调用许可")
+        try:
+            return self._call_with_retry(payload)
+        finally:
+            _LLM_SEMAPHORE.release()
 
     # ── 内部 ────────────────────────────────────
 

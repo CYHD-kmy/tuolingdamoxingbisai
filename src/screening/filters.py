@@ -59,11 +59,16 @@ def filter_tradable(
             if ipo_date:
                 try:
                     ipo_dt = _parse_ipo_date(ipo_date)
-                    if ipo_dt and ipo_dt > cutoff:
+                    if ipo_dt is None:
+                        # 无法解析日期，保守处理：视为新股跳过
+                        new_count += 1
+                        continue
+                    if ipo_dt > cutoff:
                         new_count += 1
                         continue
                 except (ValueError, IndexError):
-                    pass  # 无法解析日期则放行
+                    new_count += 1
+                    continue
 
         passed.append(s)
 

@@ -19,6 +19,7 @@ LangGraph 工作流 — 基于 StateGraph 的日内投资决策流水线。
 from __future__ import annotations
 
 import logging
+import os
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
@@ -38,6 +39,7 @@ from ..agents.researchers.engine import DebateEngine
 from ..agents.managers.research_manager import ResearchManager
 from ..agents.managers.risk_manager import RiskManager
 from ..agents.managers.portfolio_manager import PortfolioManager
+from ..utils.config import get_config
 
 logger = logging.getLogger(__name__)
 
@@ -53,7 +55,39 @@ def run_screening(state: PipelineState) -> dict[str, Any]:
     pipeline = ScreeningPipeline(data)
 
     try:
-        result = pipeline.run()
+        cfg = get_config()
+        strategy_name = cfg.active_strategies
+
+        if strategy_name and strategy_name != "default":
+            # 多策略竞争模式
+            from ..strategies.engine import CompetitionEngine
+            from ..strategies.registry import StrategyRegistry
+
+            snapshots = data.get_market_snapshot()
+            if not snapshots:
+                result = pipeline.run()
+            else:
+                engine = CompetitionEngine(
+                    strategies=None if strategy_name == "all" else strategy_name.split(","),
+                )
+                daily_all = data.batch_daily_data(
+                    [s.code for s in snapshots[:100]], days=30, max_workers=8,
+                )
+                flows_all = data.batch_fund_flows(
+                    [s.code for s in snapshots[:100]], days=5, max_workers=8,
+                )
+                comp_result = engine.run(snapshots, daily_all, flows_all)
+                from ..screening.pipeline import ScreeningResult
+                result = ScreeningResult(
+                    candidates=comp_result.merged_candidates[:cfg.max_candidates],
+                    total_screened=len(snapshots),
+                    after_filters=len(comp_result.merged_candidates),
+                    elapsed_filter=0,
+                    elapsed_score=comp_result.strategy_results.get("momentum", StrategyResult(name="")).metadata.get("elapsed", 0),
+                )
+        else:
+            result = pipeline.run()
+
         updates: dict[str, Any] = {
             "candidates": result.candidates,
             "errors": state.errors + result.errors,
@@ -181,6 +215,8 @@ def run_risk(state: PipelineState) -> dict[str, Any]:
     t0 = time.monotonic()
     logger.info("===== 阶段 3/4: 风控计算 =====")
 
+    cfg = get_config()
+
     verdicts = list(state.verdicts.values())
     if not verdicts:
         return {"stage": "risk_skipped"}
@@ -205,17 +241,40 @@ def run_risk(state: PipelineState) -> dict[str, Any]:
     try:
         unlocks = data.get_unlock_shares(days_ahead=30)
         for u in unlocks:
-            if u.unlock_ratio > 0.5:
+            if u.unlock_ratio > 0.005:
                 unlock_map[u.code] = u.unlock_ratio
         if unlock_map:
             logger.info("限售解禁: %d 只股票有近期解禁风险", len(unlock_map))
     except Exception:
         logger.debug("限售解禁数据获取失败，跳过")
 
+    # 可选: 加载 RL 模型生成交易信号
+    rl_signals = None
+    if cfg.rl_enabled or cfg.rl_model_path:
+        try:
+            from ..rl.agent import DQNAgent
+            agent = DQNAgent()
+            model_path = cfg.rl_model_path or os.path.join(cfg.results_dir, "rl_model.json")
+            if os.path.exists(model_path):
+                agent.load(model_path)
+                rl_signals = {}
+                for v in verdicts:
+                    records = state.daily_data.get(v.code, [])
+                    if len(records) >= 20:
+                        signal = agent.infer(records)
+                        conf = agent.get_q_confidence(records)
+                        rl_signals[v.code] = (signal, conf)
+                logger.info("RL 信号已生成: %d 只股票", len(rl_signals))
+            else:
+                logger.debug("RL 模型文件 %s 不存在，跳过", model_path)
+        except Exception:
+            logger.debug("RL 信号生成失败", exc_info=True)
+
     limits = risk_mgr.compute_limits(
         verdicts, state.daily_data, current_positions,
         industry_map=industry_map or None,
         unlock_shares=unlock_map or None,
+        rl_signals=rl_signals,
     )
 
     elapsed = dict(state.elapsed)
@@ -352,20 +411,19 @@ def run_pipeline(total_capital: float = 500_000.0) -> PipelineState:
 
 def _build_current_positions(state: PipelineState) -> dict[str, int]:
     """加载当前持仓: 优先从上一交易日 trace 文件读取，否则返回空"""
-    from ..output.trace_logger import load_trace
-    from ..utils.trading_calendar import prev_trading_day
-    from datetime import datetime
+    from ..agents.portfolio_tracker import PortfolioTracker
+    from ..utils.config import get_config
 
-    prev_day = prev_trading_day(datetime.now())
-    prev_trace = load_trace(prev_day.strftime("%Y%m%d"))
-    if prev_trace:
-        decisions = prev_trace.get("decisions", [])
-        return {d["symbol"]: d["volume"] for d in decisions if d.get("volume", 0) > 0}
-
-    # 回退: 使用当前状态 (仅 re-run 场景有效)
-    if state.final_result and state.final_result.decisions:
-        return {d.symbol: d.volume for d in state.final_result.decisions}
-    return {}
+    config = get_config()
+    tracker = PortfolioTracker(
+        total_capital=state.total_capital,
+        results_dir=config.results_dir,
+    )
+    tracker.load()
+    positions = tracker.current_positions_dict()
+    if positions:
+        logger.info("已加载持仓: %d 只, 现金 %.0f", len(positions), tracker.cash)
+    return positions
 
 
 def _print_summary(state: PipelineState) -> None:

@@ -14,13 +14,28 @@ from datetime import datetime
 from ..graph.state import PipelineState
 
 
-def generate_daily_report(state: PipelineState) -> str:
-    """基于流水线状态生成完整的 Markdown 日报"""
+def generate_daily_report(state: PipelineState, tracker=None) -> str:
+    """基于流水线状态生成完整的 Markdown 日报。
+
+    tracker: 可选的 PortfolioTracker 实例，用于持仓快照和累计收益
+    """
     today = datetime.now().strftime("%Y-%m-%d")
+
+    # 账户概览
+    equity = state.total_capital
+    total_return = 0.0
+    cum_pnl = 0.0
+    if tracker:
+        equity = tracker.total_equity()
+        total_return = tracker.total_return()
+        cum_pnl = tracker.cumulative_pnl
+
     lines = [
         f"# 智投未来 — 日内投资日报",
         f"**日期**: {today}",
-        f"**总资金**: ¥{state.total_capital:,.0f}",
+        f"**总资金**: ¥{state.total_capital:,.0f}    "
+        f"**当前权益**: ¥{equity:,.0f}    "
+        f"**累计收益**: ¥{cum_pnl:+,.0f} ({total_return:+.2f}%)",
         "",
         "---",
         "",
@@ -33,13 +48,17 @@ def generate_daily_report(state: PipelineState) -> str:
     lines.extend(_section_reasoning(state))
 
     # ── 3. 持仓快照 ──
-    lines.extend(_section_portfolio(state))
+    lines.extend(_section_portfolio(state, tracker))
 
     # ── 4. 明日关注 ──
     lines.extend(_section_watchlist(state))
 
     # ── 5. 附录: 耗时 ──
     lines.extend(_section_elapsed(state))
+
+    # ── 6. 历史收益曲线 (如有) ──
+    if tracker and tracker.history:
+        lines.extend(_section_history(tracker))
 
     return "\n".join(lines)
 
@@ -114,8 +133,34 @@ def _section_reasoning(state: PipelineState) -> list[str]:
     return lines
 
 
-def _section_portfolio(state: PipelineState) -> list[str]:
+def _section_portfolio(state: PipelineState, tracker=None) -> list[str]:
     lines = ["## 三、持仓快照", ""]
+
+    # 优先使用 tracker 持仓数据 (包含累计持仓和平均成本)
+    if tracker and tracker.positions:
+        summary = tracker.to_summary()
+        lines.append(f"现金: ¥{summary['cash']:,.0f}    "
+                     f"持仓市值: ¥{summary['market_value']:,.0f}    "
+                     f"累计收益: ¥{summary['cumulative_pnl']:+,.0f}")
+        lines.append("")
+        lines.append("| 代码 | 名称 | 股数 | 成本 | 现价 | 浮动盈亏 | 行业 |")
+        lines.append("|------|------|------|------|------|----------|------|")
+        for p in summary["positions"]:
+            pnl = f"¥{p['pnl']:+,.0f} ({p['pnl_pct']:+.1f}%)" if p["shares"] > 0 else "-"
+            lines.append(
+                f"| {p['code']} | {p['name']} | {p['shares']} | "
+                f"¥{p['avg_cost']:.2f} | ¥{p['last_price']:.2f} | "
+                f"{pnl} | {p.get('industry', '-')} |"
+            )
+        lines.append("")
+
+        # 行业分布
+        if summary.get("industry_exposure"):
+            lines.append("**行业分布**:")
+            for ind, pct in summary["industry_exposure"].items():
+                lines.append(f"- {ind}: {pct:.1f}%")
+            lines.append("")
+        return lines
 
     if not state.final_result or not state.final_result.decisions:
         lines.append("当前无持仓。")
@@ -128,7 +173,6 @@ def _section_portfolio(state: PipelineState) -> list[str]:
         limit = state.position_limits.get(d.symbol)
         max_pct = f"{limit.max_position_pct:.0%}" if limit else "-"
 
-        # 获取入场价和当前价
         entry = d.entry_price if d.entry_price > 0 else _lookup_price(d.symbol, state.daily_data)
         current = _lookup_price(d.symbol, state.daily_data)
 
@@ -143,6 +187,24 @@ def _section_portfolio(state: PipelineState) -> list[str]:
         current_str = f"¥{current:.2f}" if current > 0 else "-"
 
         lines.append(f"| {d.symbol} | {d.symbol_name} | {d.volume} | {entry_str} | {current_str} | {pnl_str} | {max_pct} |")
+    lines.append("")
+    return lines
+
+
+def _section_history(tracker) -> list[str]:
+    lines = ["## 六、历史收益", ""]
+    if not tracker.history:
+        lines.append("暂无历史数据。")
+        lines.append("")
+        return lines
+
+    lines.append("| 日期 | 总权益 | 日收益 | 日收益率 |")
+    lines.append("|------|--------|--------|----------|")
+    for h in tracker.history[-10:]:
+        lines.append(
+            f"| {h['date']} | ¥{h['total_value']:,.0f} | "
+            f"¥{h['daily_pnl']:+,.0f} | {h['daily_return']:+.2f}% |"
+        )
     lines.append("")
     return lines
 
