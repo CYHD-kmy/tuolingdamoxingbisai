@@ -61,6 +61,16 @@ class LLMClient:
             "Content-Type": "application/json",
         })
 
+    def close(self) -> None:
+        """关闭底层 HTTP 连接池。"""
+        self._session.close()
+
+    def __enter__(self) -> LLMClient:
+        return self
+
+    def __exit__(self, *args: Any) -> None:
+        self.close()
+
     # ── 公开 API ────────────────────────────────
 
     def chat(

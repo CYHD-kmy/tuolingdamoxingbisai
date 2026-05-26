@@ -38,30 +38,42 @@ os.makedirs(LOG_DIR, exist_ok=True)
 
 logger = logging.getLogger("src.api")
 
-_file_handler = RotatingFileHandler(
-    os.path.join(LOG_DIR, "server.log"),
-    maxBytes=10 * 1024 * 1024,  # 10MB
-    backupCount=5,
-    encoding="utf-8",
-)
-_file_handler.setFormatter(logging.Formatter(
-    "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
-))
-_file_handler.setLevel(logging.INFO)
+RESULTS_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "results")
+STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
 
-_root_logger = logging.getLogger()
-_root_logger.addHandler(_file_handler)
+# 模块级初始化标记 (防止重复添加 handler)
+_logger_initialized = False
 
-# Also log uvicorn access to file
-_access_logger = logging.getLogger("uvicorn.access")
-_access_logger.addHandler(_file_handler)
+
+def _setup_logging() -> None:
+    """配置日志 (仅执行一次)。"""
+    global _logger_initialized
+    if _logger_initialized:
+        return
+    _logger_initialized = True
+
+    _file_handler = RotatingFileHandler(
+        os.path.join(LOG_DIR, "server.log"),
+        maxBytes=10 * 1024 * 1024,
+        backupCount=5,
+        encoding="utf-8",
+    )
+    _file_handler.setFormatter(logging.Formatter(
+        "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+    ))
+    _file_handler.setLevel(logging.INFO)
+
+    _root_logger = logging.getLogger()
+    _root_logger.addHandler(_file_handler)
+
+    _access_logger = logging.getLogger("uvicorn.access")
+    _access_logger.addHandler(_file_handler)
 
 # ── App ─────────────────────────────────────────
 
-app = FastAPI(title="智投未来 看板", version="1.1.0")
+_setup_logging()
 
-RESULTS_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "results")
-STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
+app = FastAPI(title="智投未来 看板", version="1.1.0")
 
 # 确保 static 目录存在 (防止模块导入时崩溃)
 os.makedirs(STATIC_DIR, exist_ok=True)
@@ -112,8 +124,15 @@ def _list_traces() -> list[dict[str, str]]:
     return result
 
 
+def _valid_date(date_str: str) -> bool:
+    """校验日期格式为 YYYYMMDD (防止路径遍历)。"""
+    return bool(date_str) and date_str.isdigit() and len(date_str) == 8
+
+
 def _load_trace_by_date(date_str: str) -> dict[str, Any] | None:
     """按日期加载 trace"""
+    if not _valid_date(date_str):
+        return None
     filepath = os.path.join(RESULTS_DIR, f"trace_{date_str}.json")
     if not os.path.isfile(filepath):
         return None
@@ -265,6 +284,8 @@ async def api_risk(date: str | None = None):
 async def api_report(date: str | None = None):
     """返回 Markdown 日报原文"""
     if date:
+        if not _valid_date(date):
+            raise HTTPException(status_code=400, detail="日期格式错误，需为 YYYYMMDD")
         path = os.path.join(RESULTS_DIR, f"report_{date}.md")
         if os.path.isfile(path):
             with open(path, encoding="utf-8") as f:

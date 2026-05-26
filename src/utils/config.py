@@ -127,7 +127,7 @@ class Config:
     save_trace: bool = True
 
     def __post_init__(self) -> None:
-        """校验关键参数范围，非法值使用默认值并告警"""
+        """校验关键参数范围，超出范围仅告警 (不覆写用户配置)。"""
         import logging
         _log = logging.getLogger(__name__)
 
@@ -141,10 +141,8 @@ class Config:
         ]
         for value, lo, hi, name in checks:
             if not (lo <= value <= hi):
-                default = getattr(Config, name, value)
-                _log.warning("Config.%s=%.2f 超出合理范围 [%.2f, %.2f]，回退默认值 %.2f",
-                             name, value, lo, hi, default)
-                setattr(self, name, default)
+                _log.warning("Config.%s=%.2f 超出合理范围 [%.2f, %.2f]，请确认配置",
+                             name, value, lo, hi)
 
     @property
     def tushare_available(self) -> bool:

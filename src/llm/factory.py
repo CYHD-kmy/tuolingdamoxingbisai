@@ -34,10 +34,12 @@ def get_quick_llm(**overrides: Any) -> LLMClient:
 
     overrides: 可覆盖 model / temperature / max_tokens 等参数
     """
+    temperature = overrides.pop("temperature", 0.7)
+    max_tokens = overrides.pop("max_tokens", 2048)
     return _create_llm(
         model_key="quick",
-        temperature=0.7,   # quick 模型需要发散思考 (分析师报告)
-        max_tokens=2048,
+        temperature=temperature,
+        max_tokens=max_tokens,
         **overrides,
     )
 
@@ -48,10 +50,12 @@ def get_deep_llm(**overrides: Any) -> LLMClient:
 
     overrides: 可覆盖 model / temperature / max_tokens 等参数
     """
+    temperature = overrides.pop("temperature", 0.3)
+    max_tokens = overrides.pop("max_tokens", 4096)
     return _create_llm(
         model_key="deep",
-        temperature=0.3,   # deep 模型需要严谨推理 (最终决策)
-        max_tokens=4096,
+        temperature=temperature,
+        max_tokens=max_tokens,
         **overrides,
     )
 

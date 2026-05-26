@@ -68,7 +68,7 @@ class TradingEnvironment:
 
     def step(self, action: int) -> tuple[list[float], float, bool, dict]:
         """
-        执行动作。
+        执行动作，前视偏差修正: 动作基于 step t 的状态, 奖励基于 step t→t+1 的价格变化。
 
         返回: (next_state, reward, done, info)
         """
@@ -80,7 +80,7 @@ class TradingEnvironment:
         info: dict = {"action": action}
 
         if action == 1 and s.position == 0:
-            # 买入
+            # 买入 (以当日收盘价成交)
             max_shares = int(s.cash / (price * (1 + self._cost)))
             if max_shares >= 100:
                 shares = (max_shares // 100) * 100
@@ -92,7 +92,7 @@ class TradingEnvironment:
                 info["buy"] = shares
 
         elif action == 2 and s.position == 1:
-            # 卖出
+            # 卖出 (以当日收盘价成交)
             revenue = s.shares * price * (1 - self._cost)
             pnl = revenue - s.shares * s.entry_price * (1 + self._cost)
             reward = pnl / (s.shares * s.entry_price)  # 归一化收益率
@@ -102,17 +102,18 @@ class TradingEnvironment:
             s.entry_price = 0.0
             info["sell"] = pnl
 
-        # 持仓浮动盈亏 (作为奖励信号)
-        if s.position == 1:
-            reward = (price / s.entry_price - 1) if s.entry_price > 0 else 0.0
-            # 持仓时的微小正奖励 (鼓励盈利持仓)
-            if reward > 0:
-                reward *= 1.05
-
+        # 推进到下一时间步
         s.current_step = idx + 1
         done = s.current_step >= len(self._data) - 1
 
-        # 强行在最后一天卖出
+        # 持仓奖励基于 t→t+1 的收益率 (决策时未知, 无前视偏差)
+        if s.position == 1 and not done:
+            next_price = self._data[s.current_step].close
+            reward = (next_price / s.entry_price - 1) if s.entry_price > 0 else 0.0
+            if reward > 0:
+                reward *= 1.05
+
+        # 最终日强制平仓
         if done and s.position == 1:
             final_price = self._data[-1].close
             revenue = s.shares * final_price * (1 - self._cost)

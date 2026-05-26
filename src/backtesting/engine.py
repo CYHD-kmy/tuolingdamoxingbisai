@@ -113,6 +113,10 @@ class BacktestEngine:
                 dr.daily_return = (dr.equity / prev_equity - 1.0) if prev_equity > 0 else 0.0
             prev_equity = dr.equity if dr.equity > 0 else prev_equity
 
+            # 跨日资金追踪: 当日买入花费从 capital 中扣除，次日可用资金减少
+            day_spent = sum(d.entry_price * d.volume for d in dr.decisions)
+            capital = max(0.0, capital - day_spent)
+
             # 模拟基准收益 (简化为 0.0002/day 即约 5%/年)
             bm_return = 0.0002 + random.uniform(-0.005, 0.005)
             dr.benchmark_return = bm_return

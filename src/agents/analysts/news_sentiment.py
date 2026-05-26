@@ -138,7 +138,7 @@ class NewsSentimentAnalyst(BaseAnalyst):
 
         # ── 市场异动 ──
         if market_activity:
-            relevant = [m for m in market_activity if code in m.code][:5]
+            relevant = [m for m in market_activity if m.code == code][:5]
             if relevant:
                 lines.append(f"\n## 市场异动 ({len(relevant)}条)")
                 for m in relevant:

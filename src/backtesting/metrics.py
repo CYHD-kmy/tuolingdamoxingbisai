@@ -73,9 +73,9 @@ def compute_metrics(
     std_excess = (sum((e - avg_excess) ** 2 for e in excess_returns) / (n - 1)) ** 0.5 if n > 1 else 0.0
     sharpe_ratio = (avg_excess / std_excess) * (trading_days_per_year ** 0.5) if std_excess > 1e-10 else 0.0
 
-    # Max Drawdown
-    peak = daily_returns[0]
+    # Max Drawdown (基于累计权益曲线)
     cum = 1.0 + daily_returns[0]
+    peak = cum  # 累计权益峰值
     max_drawdown = 0.0
     for r in daily_returns[1:]:
         cum *= (1 + r)

@@ -139,7 +139,8 @@ def main(demo: bool = False) -> None:
             from src.memory import MemoryStore
             memory = MemoryStore()
             if memory.available:
-                trace_data = json.loads(open(trace_path, encoding="utf-8").read())
+                with open(trace_path, encoding="utf-8") as f:
+                    trace_data = json.load(f)
                 memory.index_trace(trace_data)
                 logger.info("记忆已索引: %d 条记录", memory.count())
         except Exception:

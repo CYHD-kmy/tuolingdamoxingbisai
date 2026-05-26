@@ -62,6 +62,7 @@ def run_screening(state: PipelineState) -> dict[str, Any]:
             # 多策略竞争模式
             from ..strategies.engine import CompetitionEngine
             from ..strategies.registry import StrategyRegistry
+            from ..strategies.base import StrategyResult
 
             snapshots = data.get_market_snapshot()
             if not snapshots:
@@ -328,9 +329,18 @@ def run_portfolio(state: PipelineState) -> dict[str, Any]:
     deep_llm = get_deep_llm()
     portfolio_mgr = PortfolioManager(deep_llm)
 
+    # 计算实际可用资金 (总资金 - 已有持仓市值)
+    current_positions = _build_current_positions(state)
+    positions_value = 0.0
+    for code, shares in current_positions.items():
+        records = state.daily_data.get(code, [])
+        if records:
+            positions_value += shares * records[-1].close
+    cash_available = max(0.0, state.total_capital - positions_value)
+
     result = portfolio_mgr.construct(
         verdicts, state.position_limits, state.daily_data,
-        cash_available=state.total_capital, total_capital=state.total_capital,
+        cash_available=cash_available, total_capital=state.total_capital,
     )
 
     elapsed = dict(state.elapsed)

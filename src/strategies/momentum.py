@@ -46,14 +46,14 @@ class MomentumStrategy(BaseStrategy):
             ma_spread = (latest.ma5 / latest.ma20 - 1) * 100
             trend_score = min(95, max(20, 50 + ma_spread * 5))
 
-            # 3. 动量得分 (优先近期温和上涨 2-5%)
-            pct = abs(latest.pct_chg)
-            if 2 <= pct <= 5:
+            # 3. 动量得分 (只奖励正向涨幅，温和上涨 2-5% 最优)
+            pct = latest.pct_chg
+            if pct >= 2 and pct <= 5:
                 momentum_score = 75 + pct * 4
-            elif 0.5 <= pct <= 8:
+            elif pct >= 0.5 and pct <= 8:
                 momentum_score = 50 + pct * 2
             else:
-                momentum_score = 30
+                momentum_score = 30  # 下跌或涨幅 > 8% 都不适合追涨
 
             # 4. 量比确认 (量比 = latest.volume / avg volume)
             avg_vol = sum(r.volume for r in records[-10:]) / 10
