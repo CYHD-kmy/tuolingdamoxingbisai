@@ -92,7 +92,7 @@ def test_validate_empty():
 
 
 def _make_record(close: float):
-    return type("Record", (), {"close": close})()
+    return type("Record", (), {"close": close, "date": "2026-05-20"})()
 
 
 if __name__ == "__main__":

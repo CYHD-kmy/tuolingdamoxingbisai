@@ -194,7 +194,7 @@ def test_extract_json_no_json():
 # ── 辅助 ────────────────────────────────────
 
 def _make_record(close: float, pct_chg: float = 1.0):
-    return type("Record", (), {"close": close, "pct_chg": pct_chg})()
+    return type("Record", (), {"close": close, "pct_chg": pct_chg, "date": "2026-05-20"})()
 
 
 if __name__ == "__main__":

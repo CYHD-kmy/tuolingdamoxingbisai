@@ -103,16 +103,11 @@ def main(demo: bool = False) -> None:
     print("=" * 50)
 
     if state.final_result and state.final_result.decisions:
-        cash_available = (
-            state.final_result.cash_remaining
-            if state.final_result and state.final_result.cash_remaining > 0
-            else config.initial_capital
-        )
         validated = validate_decisions(
             state.final_result.decisions,
             state.position_limits,
             state.daily_data,
-            cash_available=cash_available,
+            cash_available=config.initial_capital,
             min_cash_reserve=config.min_cash_reserve,
             total_capital=config.initial_capital,
             verdicts=state.verdicts,

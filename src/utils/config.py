@@ -88,6 +88,26 @@ class Config:
     )
     save_trace: bool = True
 
+    def __post_init__(self) -> None:
+        """校验关键参数范围，非法值使用默认值并告警"""
+        import logging
+        _log = logging.getLogger(__name__)
+
+        checks: list[tuple[float, float, float, str]] = [
+            (self.max_single_position, 0.01, 0.50, "max_single_position"),
+            (self.max_industry_exposure, 0.05, 1.00, "max_industry_exposure"),
+            (self.max_drawdown_daily, 0.01, 0.20, "max_drawdown_daily"),
+            (self.min_cash_reserve, 0.0, 0.50, "min_cash_reserve"),
+            (self.request_timeout, 3, 120, "request_timeout"),
+            (self.max_retries, 0, 10, "max_retries"),
+        ]
+        for value, lo, hi, name in checks:
+            if not (lo <= value <= hi):
+                default = getattr(Config, name, value)
+                _log.warning("Config.%s=%.2f 超出合理范围 [%.2f, %.2f]，回退默认值 %.2f",
+                             name, value, lo, hi, default)
+                setattr(self, name, default)
+
     @property
     def tushare_available(self) -> bool:
         return bool(self.tushare_token)

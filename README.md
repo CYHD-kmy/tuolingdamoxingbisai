@@ -8,7 +8,7 @@
 
 | 原则 | 说明 |
 |------|------|
-| **复用优先** | 最大化复用 TradingAgents-CN、ai-hedge-fund、daily_stock_analysis 的成熟模块 |
+| **学习复用** | 学习并复用 TradingAgents-CN、ai-hedge-fund、daily_stock_analysis 的成熟模块 |
 | **可解释性** | 每笔决策附带完整推理链，数据→信号→决策全链路可审计 |
 | **稳健性** | 多层数据源降级、异常熔断、空仓兜底，极端行情下不崩溃 |
 | **模块化** | 数据层 / 分析层 / 决策层 / 输出层 松耦合，各层可独立替换 |

@@ -146,7 +146,7 @@ def test_demo_all_candidates_have_scores():
 def test_validators_shared_module():
     """共享校验模块基本功能"""
     # 测试 get_latest_price
-    daily = {"600519": [type("R", (), {"close": 1680.50})()]}
+    daily = {"600519": [type("R", (), {"close": 1680.50, "date": "2026-05-20"})()]}
     assert get_latest_price("600519", daily) == 1680.50
     assert get_latest_price("000001", daily) == 0.0
     assert get_latest_price("000001", {}) == 0.0
