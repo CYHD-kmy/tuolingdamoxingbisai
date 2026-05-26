@@ -88,6 +88,32 @@ def run_screening(state: PipelineState) -> dict[str, Any]:
         else:
             result = pipeline.run()
 
+        # Transformer 评分增强
+        if cfg.transformer_enabled and cfg.transformer_model_path:
+            try:
+                from ..transformer import TransformerScorer, StockTransformer
+
+                tf_model = StockTransformer.load(cfg.transformer_model_path)
+                tf_scorer = TransformerScorer(tf_model, score_weight=cfg.transformer_scorer_weight)
+                tf_scores = tf_scorer.score_all(
+                    [c.code for c in result.candidates],
+                    data.batch_daily_data([c.code for c in result.candidates], days=30, max_workers=6),
+                )
+                tf_map = {fs.code: fs.composite for fs in tf_scores}
+                for c in result.candidates:
+                    if c.code in tf_map:
+                        tf_score = tf_map[c.code]
+                        c.scores["transformer"] = round(tf_score, 1)
+                        c.composite = round(
+                            c.composite * (1 - cfg.transformer_scorer_weight)
+                            + tf_score * cfg.transformer_scorer_weight,
+                            1,
+                        )
+                logger.info("Transformer 评分已融合: %d 只 (权重=%.0f%%)",
+                            len(tf_map), cfg.transformer_scorer_weight * 100)
+            except Exception:
+                logger.debug("Transformer 评分增强失败", exc_info=True)
+
         updates: dict[str, Any] = {
             "candidates": result.candidates,
             "errors": state.errors + result.errors,

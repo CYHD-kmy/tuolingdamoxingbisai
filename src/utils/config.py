@@ -104,6 +104,22 @@ class Config:
     rl_episodes: int = 200
     rl_signal_weight: float = 0.15
 
+    # ── Transformer ───────────────────────────
+    transformer_enabled: bool = field(
+        default_factory=lambda: _env_bool("TRANSFORMER_ENABLED", False)
+    )
+    transformer_model_path: str = field(
+        default_factory=lambda: os.getenv("TRANSFORMER_MODEL_PATH", "")
+    )
+    transformer_train_epochs: int = 50
+    transformer_seq_len: int = 30
+    transformer_forward_days: int = 5
+    transformer_lr: float = 0.001
+    transformer_scorer_weight: float = 0.30  # 与手工因子融合时的权重
+    transformer_rl_features: bool = field(
+        default_factory=lambda: _env_bool("TRANSFORMER_RL_FEATURES", False)
+    )
+
     # ── 输出 ────────────────────────────────────
     results_dir: str = field(
         default_factory=lambda: str(_project_root() / "results")

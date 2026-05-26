@@ -116,6 +116,7 @@ python -m src.api.server
 | 组合优化 | `src/optimization/` | 风险平价(ERC)/最小方差/最大分散化 三种权重分配方法 |
 | 多策略 | `src/strategies/` | 5种Alpha策略并行竞争: 动量/均值回归/质量/情绪/默认10因子 (CompetitionEngine.save_performance 已实现，待接入主流程自动调用) |
 | 强化学习 | `src/rl/` | DQN智能体: 手动神经网络 + 经验回放 + 交易环境, 无PyTorch依赖 |
+| Transformer | `src/transformer/` | 轻量 Transformer 时序编码器: 2层/4头/32维, 纯Python实现, 增强评分+RL特征 |
 | 工具 | `src/utils/` | 配置管理 / 交易日历 / 输出校验 |
 
 ## 海选筛选 — 10 因子打分
@@ -266,7 +267,7 @@ Top 20 候选池中每只股票由 4 个分析师**并行**分析（各自使用
 | **第一阶段 (MVP)** | 数据管道 + 四分析师 + 辩论 + 风控 + JSON 输出 + Web 看板 | 已完成 |
 | **第二阶段 (增强)** | ChromaDB 记忆系统、盘中实时监控、ETF 策略、持仓追踪 | 已完成 |
 | **第三阶段 (进化)** | 回测框架、风险平价优化、多策略竞争引擎、DQN 强化学习 | 已完成 |
-| **第四阶段 (前沿)** | 实盘接入、多资产扩展、Transformer时序模型 | 规划中 |
+| **第四阶段 (前沿)** | 轻量 Transformer 时序编码器 ✅、实盘接入 (规划中)、多资产扩展 (规划中) | 部分完成 |
 
 ## 目录结构
 
@@ -339,6 +340,15 @@ zhitou-future/
 │   │   ├── features.py               #   7维技术特征提取
 │   │   └── trainer.py                #   跨股票训练器
 │   │
+│   ├── transformer/                   # Transformer 时序编码器 (Phase 4)
+│   │   ├── features.py               #   StockDaily → 10维特征向量
+│   │   ├── embedding.py              #   输入投影 + 位置编码
+│   │   ├── attention.py              #   多头自注意力 (纯Python)
+│   │   ├── encoder.py                #   TransformerEncoderLayer + Encoder
+│   │   ├── model.py                  #   StockTransformer 完整模型
+│   │   ├── training.py               #   训练数据生成 + 训练循环
+│   │   └── scorer.py                 #   TransformerScorer (FactorScore 接口)
+│   │
 │   ├── monitoring/                   # 盘中监控
 │   │   └── monitor.py                #   止损/止盈/熔断 + Webhook告警
 │   │
@@ -372,5 +382,6 @@ zhitou-future/
     ├── test_rl.py                    #   强化学习 (环境/DQN/特征/训练)
     ├── test_screening.py             #   筛选过滤器
     ├── test_strategies.py            #   多策略 (动量/回归/质量/情绪/引擎)
-    └── test_trading_calendar.py      #   交易日历
+    ├── test_trading_calendar.py      #   交易日历
+    └── test_transformer.py           #   Transformer (31 tests)
 ```

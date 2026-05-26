@@ -180,6 +180,11 @@ if __name__ == "__main__":
     parser.add_argument("--rl-train", action="store_true", help="训练 RL 模型")
     parser.add_argument("--rl-model", type=str, default="", help="RL 模型路径 (推断模式)")
     parser.add_argument("--rl-episodes", type=int, default=200, help="RL 训练轮数")
+    parser.add_argument("--transformer-train", action="store_true", help="训练 Transformer 模型")
+    parser.add_argument("--transformer-model", type=str, default="",
+                        help="Transformer 模型路径 (推断模式)")
+    parser.add_argument("--transformer-epochs", type=int, default=50,
+                        help="Transformer 训练轮数")
     args = parser.parse_args()
 
     if args.backtest:
@@ -235,6 +240,65 @@ if __name__ == "__main__":
         logger.info("RL 模型已保存: %s", model_path)
         logger.info("训练完成: epsilon=%.4f total_reward=%.2f",
                     agent.epsilon, agent._total_reward)
+        sys.exit(0)
+
+    if args.transformer_train:
+        import logging
+        logging.basicConfig(
+            level=logging.INFO,
+            format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+            datefmt="%H:%M:%S",
+        )
+        logger = logging.getLogger("transformer")
+        from src.transformer import StockTransformer, generate_training_data, train_transformer
+        from src.demo import _SAMPLE_STOCKS
+
+        logger.info("开始 Transformer 训练 (%d epochs)...", args.transformer_epochs)
+
+        # 生成 60 天样本数据
+        records_list: dict[str, list] = {}
+        for code, name, price, pct, vol, turn, amt, pe, mv in _SAMPLE_STOCKS:
+            records = []
+            cur_price = price * 0.82
+            for i in range(60):
+                daily_pct = 0.6 + (i % 5) * 0.3
+                cur_price = cur_price * (1 + daily_pct / 100)
+                record = type("Record", (), {
+                    "date": f"2026-05-{i+1:02d}",
+                    "open": cur_price * 0.99, "high": cur_price * 1.02,
+                    "low": cur_price * 0.98, "close": cur_price, "volume": 2e7,
+                    "amount": cur_price * 2e7 * 0.7, "pct_chg": daily_pct,
+                    "turnover": 3.0, "ma5": cur_price * 0.99,
+                    "ma10": cur_price * 0.97, "ma20": cur_price * 0.95,
+                    "macd_dif": 0.5, "macd_dea": 0.3, "macd_bar": 0.2,
+                    "rsi_6": 55.0, "rsi_14": 52.0,
+                })()
+                records.append(record)
+            records_list[code] = records
+
+        samples = generate_training_data(
+            records_list,
+            seq_len=get_config().transformer_seq_len,
+            forward_days=get_config().transformer_forward_days,
+            max_seq_len=60,
+        )
+        logger.info("训练样本: %d 条", len(samples))
+
+        if len(samples) == 0:
+            logger.error("训练样本为空，请检查数据")
+            sys.exit(1)
+
+        model = StockTransformer()
+        losses = train_transformer(
+            model, samples,
+            epochs=args.transformer_epochs,
+            lr=get_config().transformer_lr,
+        )
+        model_path = args.transformer_model or os.path.join(
+            get_config().results_dir, "transformer_model.json"
+        )
+        model.save(model_path)
+        logger.info("Transformer 模型已保存: %s (final loss=%.6f)", model_path, losses[-1])
         sys.exit(0)
 
     main(demo=args.demo)
