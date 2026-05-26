@@ -189,7 +189,7 @@ def _make_analyst_reports() -> dict[str, list[AnalystReport]]:
                              "品牌护城河深厚，直销占比提升带动毛利率改善，估值有修复空间。"),
             "fund_flow": ("bullish", 0.85, "近5日主力资金持续净流入累计超过5.5亿，超大单占比显著提升。"
                           "北向资金连续3日增持，融资余额温和上升，资金面偏多。"),
-            "news_sentiment": ("bullish", 0.72, "飞天茅台批价企稳回升，i茅台平台GMV增长超预期。"
+            "news": ("bullish", 0.72, "飞天茅台批价企稳回升，i茅台平台GMV增长超预期。"
                                "机构研报普遍看好，市场情绪偏积极。近期无重大利空。"),
         },
         "000858": {
@@ -199,7 +199,7 @@ def _make_analyst_reports() -> dict[str, list[AnalystReport]]:
                              "产品结构升级顺利，系列酒增速超预期。分红率3.2%具有防御价值。"),
             "fund_flow": ("bullish", 0.78, "近5日主力净流入累计3.5亿，大单持续买入。"
                           "融资买入额上升，市场关注度提升。但北向有小幅流出需关注。"),
-            "news_sentiment": ("neutral", 0.55, "白酒板块整体回暖，但消费税改革传闻有不确定性。"
+            "news": ("neutral", 0.55, "白酒板块整体回暖，但消费税改革传闻有不确定性。"
                                "渠道库存处于健康水平，中秋国庆备货预期积极。"),
         },
         "300750": {
@@ -209,7 +209,7 @@ def _make_analyst_reports() -> dict[str, list[AnalystReport]]:
                              "神行电池量产进度超预期。储能业务增速80%+，第二增长曲线确立。"),
             "fund_flow": ("bullish", 0.82, "近5日主力净流入超6亿，超大单买入积极。"
                           "北向资金本周净买入3.2亿，机构配置需求旺盛。"),
-            "news_sentiment": ("bullish", 0.75, "锂电池行业排产超预期，上游碳酸锂价格企稳。"
+            "news": ("bullish", 0.75, "锂电池行业排产超预期，上游碳酸锂价格企稳。"
                                "公司与多家车企签订长期供货协议，市场信心增强。"),
         },
         "002594": {
@@ -219,7 +219,7 @@ def _make_analyst_reports() -> dict[str, list[AnalystReport]]:
                              "海外出口翻倍增长，高端品牌仰望交付超预期。规模效应持续释放。"),
             "fund_flow": ("bullish", 0.90, "近5日主力净流入超14亿，为全市场最高。"
                           "游资和机构共同买入，龙虎榜显示多家知名营业部大额买入。"),
-            "news_sentiment": ("bullish", 0.85, "新能源汽车政策持续加码，以旧换新补贴落地。"
+            "news": ("bullish", 0.85, "新能源汽车政策持续加码，以旧换新补贴落地。"
                                "比亚迪海鸥出口欧洲获认证通过，海外市场加速扩张。"),
         },
         "601318": {
@@ -229,7 +229,7 @@ def _make_analyst_reports() -> dict[str, list[AnalystReport]]:
                              "NBV增速转正，代理人改革初见成效。分红率5.2%提供安全边际。"),
             "fund_flow": ("neutral", 0.58, "主力资金小幅净流入但规模有限。北向资金有进有出，"
                           "整体资金面中性。需要催化剂打破僵局。"),
-            "news_sentiment": ("neutral", 0.50, "保险板块整体走势平淡。利率下行对利差有负面影响，"
+            "news": ("neutral", 0.50, "保险板块整体走势平淡。利率下行对利差有负面影响，"
                                "但权益市场回暖利好投资收益。短期缺乏明确催化剂。"),
         },
         "000333": {
@@ -239,7 +239,7 @@ def _make_analyst_reports() -> dict[str, list[AnalystReport]]:
                              "海外业务占比提升至40%+，OBM自主品牌增长强劲。智能家居生态完善。"),
             "fund_flow": ("neutral", 0.55, "主力资金小幅流入约1000万，方向不明。"
                           "近期以散户资金为主，机构持仓相对稳定。等待业绩催化。"),
-            "news_sentiment": ("neutral", 0.52, "家电以旧换新政策利好但效果待观察。"
+            "news": ("neutral", 0.52, "家电以旧换新政策利好但效果待观察。"
                                "海外关税不确定性形成压制。公司回购计划提供底部支撑。"),
         },
     }
@@ -247,7 +247,7 @@ def _make_analyst_reports() -> dict[str, list[AnalystReport]]:
     for code, name, *_ in _SAMPLE_STOCKS:
         tmpl = templates.get(code, {})
         reports = []
-        for atype in ["technical", "fundamentals", "fund_flow", "news_sentiment"]:
+        for atype in ["technical", "fundamentals", "fund_flow", "news"]:
             t = tmpl.get(atype, ("neutral", 0.50, f"{name} {atype} 分析暂无明确信号。"))
             reports.append(AnalystReport(
                 analyst_type=atype,
@@ -399,8 +399,8 @@ def _make_position_limits() -> dict[str, PositionLimit]:
 def _make_portfolio_result() -> PortfolioResult:
     """生成最终组合决策: 买入 600519 + 000858"""
     decisions = [
-        FinalDecision(symbol="600519", symbol_name="贵州茅台", volume=200),
-        FinalDecision(symbol="000858", symbol_name="五粮液",   volume=300),
+        FinalDecision(symbol="600519", symbol_name="贵州茅台", volume=200, entry_price=1680.50),
+        FinalDecision(symbol="000858", symbol_name="五粮液",   volume=300, entry_price=152.30),
     ]
     # 200 * 1680.50 + 300 * 152.30 = 336100 + 45690 = 381790
     cash_used = 200 * 1680.50 + 300 * 152.30

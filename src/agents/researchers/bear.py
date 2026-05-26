@@ -106,7 +106,7 @@ class BearResearcher:
         ]
 
         if round_num > 1:
-            lines.append("这是第{}轮辩论。请在前几轮基础上进一步深挖，不要重复之前的论点。".format(round_num))
+            lines.append(f"这是第{round_num}轮辩论。请在前几轮基础上进一步深挖，不要重复之前的论点。")
         else:
             lines.append("请逐条审视多头论点的逻辑漏洞，指出被忽略的风险信号。")
 

@@ -1,8 +1,13 @@
 """
-LangGraph 工作流 — 将数据/筛选/分析/风控/决策串联为完整的日内流水线。
+LangGraph 工作流 — 基于 StateGraph 的日内投资决策流水线。
 
 节点:
-  screening → analyze_all → risk → portfolio → finalize
+  screening → analysis → risk → portfolio → END
+
+条件路由:
+  - screening 无候选 → 跳过后续阶段
+  - analysis 无有效研判 → 跳过风控和组合
+  - risk 无仓位限制 → 跳过组合构建
 
 使用方式:
     from src.graph.workflow import run_pipeline
@@ -17,6 +22,8 @@ import logging
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
+
+from langgraph.graph import StateGraph, END
 
 from .state import PipelineState
 from ..agents.models import DebateResult, PortfolioResult, ResearchVerdict
@@ -48,31 +55,29 @@ def run_screening(state: PipelineState) -> dict[str, Any]:
 
     try:
         result = pipeline.run()
-        state.candidates = result.candidates
-        state.errors.extend(result.errors)
+        updates: dict[str, Any] = {
+            "candidates": result.candidates,
+            "errors": state.errors + result.errors,
+        }
 
-        # 批量获取候选股的日线和资金数据 (后续阶段复用)
         codes = [c.code for c in result.candidates]
         if codes:
-            state.daily_data = data.batch_daily_data(codes, days=30, max_workers=6)
-            state.fund_flows = data.batch_fund_flows(codes, days=5, max_workers=6)
+            updates["daily_data"] = data.batch_daily_data(codes, days=30, max_workers=6)
+            updates["fund_flows"] = data.batch_fund_flows(codes, days=5, max_workers=6)
 
-        state.stage = "screening_done"
+        updates["stage"] = "screening_done"
         logger.info("筛选完成: %d 只候选", len(result.candidates))
     except Exception as e:
         logger.exception("筛选阶段异常")
-        state.errors.append(f"筛选失败: {e}")
-        state.stage = "screening_failed"
+        updates = {
+            "errors": state.errors + [f"筛选失败: {e}"],
+            "stage": "screening_failed",
+        }
 
-    state.elapsed["screening"] = time.monotonic() - t0
-    return {
-        "candidates": state.candidates,
-        "daily_data": state.daily_data,
-        "fund_flows": state.fund_flows,
-        "errors": state.errors,
-        "stage": state.stage,
-        "elapsed": state.elapsed,
-    }
+    elapsed = dict(state.elapsed)
+    elapsed["screening"] = time.monotonic() - t0
+    updates["elapsed"] = elapsed
+    return updates
 
 
 def run_analysis(state: PipelineState) -> dict[str, Any]:
@@ -81,8 +86,7 @@ def run_analysis(state: PipelineState) -> dict[str, Any]:
     logger.info("===== 阶段 2/4: 深度分析 (%d 只) =====", len(state.candidates))
 
     if not state.candidates:
-        state.stage = "analysis_skipped"
-        return {"stage": state.stage}
+        return {"stage": "analysis_skipped"}
 
     quick_llm = get_quick_llm()
     deep_llm = get_deep_llm()
@@ -90,7 +94,6 @@ def run_analysis(state: PipelineState) -> dict[str, Any]:
     engine = DebateEngine(quick_llm)
     research_mgr = ResearchManager(deep_llm)
 
-    # 创建分析师实例
     analysts = [
         TechnicalAnalyst(quick_llm, data),
         FundamentalsAnalyst(quick_llm, data),
@@ -99,11 +102,9 @@ def run_analysis(state: PipelineState) -> dict[str, Any]:
     ]
 
     def analyze_single(candidate) -> tuple[str, list, DebateResult, Any]:
-        """对单只股票执行完整分析链"""
         code = candidate.code
         name = candidate.name
 
-        # 1. 四维分析师并行分析
         reports = []
         for a in analysts:
             try:
@@ -113,20 +114,17 @@ def run_analysis(state: PipelineState) -> dict[str, Any]:
                 logger.warning("%s 分析师 %s 失败: %s", code, a.analyst_type, e)
 
         if len(reports) < 2:
-            logger.warning("%s: 有效分析报告不足 2 份，跳过", code)
             return code, reports, DebateResult(code=code, name=name), ResearchVerdict(
                 code=code, name=name, direction="hold", confidence=0.0,
                 core_reasoning="分析报告不足",
             )
 
-        # 2. 辩论
         try:
-            debate = engine.debate(code, name, reports, max_rounds=2)
+            debate = engine.debate(code, name, reports)
         except Exception as e:
             logger.warning("%s 辩论失败: %s", code, e)
             debate = DebateResult(code=code, name=name)
 
-        # 3. 研究主管研判
         try:
             records = state.daily_data.get(code, [])
             price = records[-1].close if records else 0
@@ -137,32 +135,37 @@ def run_analysis(state: PipelineState) -> dict[str, Any]:
 
         return code, reports, debate, verdict
 
-    # 并发分析所有候选 (每只股票内部的分析师和辩论串行，股票之间并行)
-    max_workers = min(len(state.candidates), 4)
+    analyst_reports: dict = {}
+    debates: dict = {}
+    verdicts: dict = {}
+    errors: list[str] = list(state.errors)
+
+    max_workers = max(1, min(len(state.candidates), 4))
     with ThreadPoolExecutor(max_workers=max_workers) as pool:
         futures = {pool.submit(analyze_single, c): c for c in state.candidates}
         for future in as_completed(futures):
             try:
                 code, reports, debate, verdict = future.result()
-                state.analyst_reports[code] = reports
-                state.debates[code] = debate
-                state.verdicts[code] = verdict
+                analyst_reports[code] = reports
+                debates[code] = debate
+                verdicts[code] = verdict
             except Exception as e:
                 c = futures[future]
                 logger.exception("%s 分析全链路失败: %s", c.code, e)
-                state.errors.append(f"{c.code} 分析失败: {e}")
+                errors.append(f"{c.code} 分析失败: {e}")
+        del futures
 
-    state.stage = "analysis_done"
-    state.elapsed["analysis"] = time.monotonic() - t0
-    logger.info("分析完成: %d 只有效研判", len(state.verdicts))
+    elapsed = dict(state.elapsed)
+    elapsed["analysis"] = time.monotonic() - t0
+    logger.info("分析完成: %d 只有效研判", len(verdicts))
 
     return {
-        "analyst_reports": state.analyst_reports,
-        "debates": state.debates,
-        "verdicts": state.verdicts,
-        "errors": state.errors,
-        "stage": state.stage,
-        "elapsed": state.elapsed,
+        "analyst_reports": analyst_reports,
+        "debates": debates,
+        "verdicts": verdicts,
+        "errors": errors,
+        "stage": "analysis_done",
+        "elapsed": elapsed,
     }
 
 
@@ -173,10 +176,8 @@ def run_risk(state: PipelineState) -> dict[str, Any]:
 
     verdicts = list(state.verdicts.values())
     if not verdicts:
-        state.stage = "risk_skipped"
-        return {"stage": state.stage}
+        return {"stage": "risk_skipped"}
 
-    # 获取行业信息，构建行业映射
     data = UnifiedDataInterface()
     codes = [v.code for v in verdicts]
     stock_infos = data.batch_stock_info(codes)
@@ -189,22 +190,23 @@ def run_risk(state: PipelineState) -> dict[str, Any]:
         logger.info("行业映射: %d 只", len(industry_map))
 
     risk_mgr = RiskManager(total_capital=state.total_capital)
+    # 传入当前已买入股票作为 current_positions，使行业集中度检查生效
+    current_positions = _build_current_positions(state)
     limits = risk_mgr.compute_limits(
-        verdicts, state.daily_data, {},
+        verdicts, state.daily_data, current_positions,
         industry_map=industry_map if industry_map else None,
     )
 
-    state.position_limits = limits
-    state.stage = "risk_done"
-    state.elapsed["risk"] = time.monotonic() - t0
+    elapsed = dict(state.elapsed)
+    elapsed["risk"] = time.monotonic() - t0
 
     buy_count = sum(1 for l in limits.values() if l.max_shares > 0)
     logger.info("风控完成: %d 只可买入", buy_count)
 
     return {
-        "position_limits": state.position_limits,
-        "stage": state.stage,
-        "elapsed": state.elapsed,
+        "position_limits": limits,
+        "stage": "risk_done",
+        "elapsed": elapsed,
     }
 
 
@@ -215,28 +217,91 @@ def run_portfolio(state: PipelineState) -> dict[str, Any]:
 
     verdicts = list(state.verdicts.values())
     if not verdicts or not state.position_limits:
-        state.stage = "portfolio_skipped"
-        return {"stage": state.stage, "final_result": PortfolioResult(decisions=[])}
+        return {"stage": "portfolio_skipped", "final_result": PortfolioResult(decisions=[])}
 
     deep_llm = get_deep_llm()
     portfolio_mgr = PortfolioManager(deep_llm)
 
-    cash = state.total_capital
-
     result = portfolio_mgr.construct(
         verdicts, state.position_limits, state.daily_data,
-        cash_available=cash, total_capital=state.total_capital,
+        cash_available=state.total_capital, total_capital=state.total_capital,
     )
 
-    state.final_result = result
-    state.stage = "done"
-    state.elapsed["portfolio"] = time.monotonic() - t0
+    elapsed = dict(state.elapsed)
+    elapsed["portfolio"] = time.monotonic() - t0
 
     return {
-        "final_result": state.final_result,
-        "stage": state.stage,
-        "elapsed": state.elapsed,
+        "final_result": result,
+        "stage": "done",
+        "elapsed": elapsed,
     }
+
+
+# ── 条件路由 ─────────────────────────────────
+
+def _after_screening(state: PipelineState) -> str:
+    """有候选 → 分析; 否则 → 结束"""
+    if state.candidates and state.stage != "screening_failed":
+        return "analysis"
+    logger.warning("筛选无候选，流水线终止")
+    return END
+
+
+def _after_analysis(state: PipelineState) -> str:
+    """有研判 → 风控; 否则 → 结束"""
+    if state.verdicts:
+        return "risk"
+    logger.warning("分析无有效研判，流水线终止")
+    return END
+
+
+def _after_risk(state: PipelineState) -> str:
+    """有仓位限制 → 组合; 否则 → 结束"""
+    if state.position_limits:
+        return "portfolio"
+    logger.warning("风控无有效仓位限制，流水线终止")
+    return END
+
+
+# ── 图构建 ────────────────────────────────────
+
+def _build_graph() -> StateGraph:
+    """构建 LangGraph StateGraph"""
+    workflow = StateGraph(PipelineState)
+
+    workflow.add_node("screening", run_screening)
+    workflow.add_node("analysis", run_analysis)
+    workflow.add_node("risk", run_risk)
+    workflow.add_node("portfolio", run_portfolio)
+
+    workflow.set_entry_point("screening")
+
+    workflow.add_conditional_edges("screening", _after_screening, {
+        "analysis": "analysis",
+        END: END,
+    })
+    workflow.add_conditional_edges("analysis", _after_analysis, {
+        "risk": "risk",
+        END: END,
+    })
+    workflow.add_conditional_edges("risk", _after_risk, {
+        "portfolio": "portfolio",
+        END: END,
+    })
+    workflow.add_edge("portfolio", END)
+
+    return workflow.compile()
+
+
+# 模块级编译缓存
+_graph = None
+
+
+def _get_graph():
+    global _graph
+    if _graph is None:
+        _graph = _build_graph()
+    return _graph
 
 
 # ── 流水线入口 ─────────────────────────────────
@@ -245,35 +310,30 @@ def run_pipeline(total_capital: float = 500_000.0) -> PipelineState:
     """
     执行完整的日内投资决策流水线。
 
+    基于 LangGraph StateGraph 编排，支持条件路由:
+      screening → analysis → risk → portfolio → END
+                          ↑ 无候选/无研判/无仓位时提前终止
+
     返回: 包含所有阶段结果的 PipelineState
     """
-    state = PipelineState(total_capital=total_capital)
+    initial_state = PipelineState(total_capital=total_capital)
+    app = _get_graph()
+    result = app.invoke(initial_state)
 
-    # 顺序执行各阶段 (MVP 阶段不使用 LangGraph 图结构，保持简单可调试)
-    state_dict = run_screening(state)
-    _apply(state, state_dict)
-
-    state_dict = run_analysis(state)
-    _apply(state, state_dict)
-
-    state_dict = run_risk(state)
-    _apply(state, state_dict)
-
-    state_dict = run_portfolio(state)
-    _apply(state, state_dict)
-
-    total_elapsed = sum(state.elapsed.values())
+    total_elapsed = sum(result.elapsed.values()) if hasattr(result, "elapsed") else 0
     logger.info("===== 流水线完成 (%.1fs) =====", total_elapsed)
-    _print_summary(state)
+    _print_summary(result)
 
-    return state
+    return result
 
 
-def _apply(state: PipelineState, updates: dict[str, Any]) -> None:
-    """将更新字典应用到 state 对象"""
-    for key, value in updates.items():
-        if hasattr(state, key):
-            setattr(state, key, value)
+# ── 辅助 ──────────────────────────────────────
+
+def _build_current_positions(state: PipelineState) -> dict[str, int]:
+    """从已有最终结果中提取当前持仓 {code: shares}"""
+    if state.final_result and state.final_result.decisions:
+        return {d.symbol: d.volume for d in state.final_result.decisions}
+    return {}
 
 
 def _print_summary(state: PipelineState) -> None:

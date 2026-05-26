@@ -40,13 +40,13 @@ class DebateEngine:
         code: str,
         name: str,
         reports: list[AnalystReport],
-        max_rounds: int = 2,
+        max_rounds: int = 3,
     ) -> DebateResult:
         """
         执行多轮辩论。
 
         reports: 四份分析师报告
-        max_rounds: 最大辩论轮数 (默认2轮)
+        max_rounds: 最大辩论轮数 (默认3轮)
 
         返回: 完整辩论记录
         """
@@ -65,7 +65,7 @@ class DebateEngine:
             else:
                 bull_rebuttal = self._bull.research(code, name, reports, bear_argument, rnd)
 
-            # 空头反驳
+            # 空头反驳 (优先针对最新回应)
             target = bull_rebuttal if bull_rebuttal else bull_argument
             bear_response = self._bear.research(code, name, reports, target, rnd)
 
@@ -80,12 +80,12 @@ class DebateEngine:
             else:
                 result.rounds.append(DebateRound(
                     round_num=rnd,
-                    bull_argument=bull_argument,
-                    bear_argument=bear_argument,
-                    bull_rebuttal=bull_rebuttal,
-                    bear_summary=bear_response,
+                    bull_argument=bull_rebuttal,
+                    bear_argument=bear_response,
                 ))
-                bear_argument = bear_response  # 更新供下一轮使用
+                # 推进论点: 当前轮的新观点成为下一轮的起始基线
+                bull_argument = bull_rebuttal
+                bear_argument = bear_response
 
         result.total_rounds = len(result.rounds)
         logger.info("辩论完成: %s %s 共%d轮", code, name, result.total_rounds)

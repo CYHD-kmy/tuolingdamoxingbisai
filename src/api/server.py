@@ -63,6 +63,9 @@ app = FastAPI(title="智投未来 看板", version="1.1.0")
 RESULTS_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "results")
 STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
 
+# 确保 static 目录存在 (防止模块导入时崩溃)
+os.makedirs(STATIC_DIR, exist_ok=True)
+
 # 挂载静态资源 (CSS / JS)
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
@@ -297,4 +300,4 @@ if __name__ == "__main__":
     import uvicorn
     host = os.getenv("ZHITOU_HOST", "0.0.0.0")
     port = int(os.getenv("ZHITOU_PORT", "8000"))
-    uvicorn.run("src.api.server:app", host=host, port=port, reload=True)
+    uvicorn.run("src.api.server:app", host=host, port=port, reload=False)

@@ -27,6 +27,32 @@ from ..utils.config import get_config
 
 logger = logging.getLogger(__name__)
 
+_fetchers_cache: list | None = None
+_fetchers_cache_key: tuple | None = None
+
+
+def _build_fetchers(config) -> list:
+    """构建并排序 fetcher 列表，结果按 config 的优先级缓存。"""
+    global _fetchers_cache, _fetchers_cache_key
+    key = (
+        config.fetcher_priority("akshare"),
+        config.fetcher_priority("tushare"),
+        config.fetcher_priority("baostock"),
+        config.tushare_available,
+    )
+    if _fetchers_cache is not None and _fetchers_cache_key == key:
+        return _fetchers_cache
+
+    fetchers = [
+        AKShareFetcher(),
+        TushareFetcher(),
+        BaoStockFetcher(),
+    ]
+    fetchers.sort(key=lambda f: config.fetcher_priority(f.name))
+    _fetchers_cache = fetchers
+    _fetchers_cache_key = key
+    return fetchers
+
 
 class UnifiedDataInterface:
     """
@@ -42,15 +68,7 @@ class UnifiedDataInterface:
     def __init__(self) -> None:
         self._config = get_config()
         self._cache = DataCache()
-
-        # 按优先级排序的 fetcher 列表
-        fetchers = [
-            AKShareFetcher(),
-            TushareFetcher(),
-            BaoStockFetcher(),
-        ]
-        fetchers.sort(key=lambda f: self._config.fetcher_priority(f.name))
-        self._fetchers = fetchers
+        self._fetchers = _build_fetchers(self._config)
 
     # ── 公开 API ─────────────────────────────
 
@@ -154,28 +172,36 @@ class UnifiedDataInterface:
         return []
 
     def get_news(self, keyword: str, days: int = 3) -> list[dict]:
-        """新闻搜索 (仅 AKShare 支持)"""
+        """新闻搜索"""
         for fetcher in self._fetchers:
             try:
-                if hasattr(fetcher, "get_news"):
-                    result = fetcher.get_news(keyword, days)
-                    if result:
-                        return result
+                result = fetcher.get_news(keyword, days)
+                if result:
+                    return result
             except Exception:
                 continue
         return []
 
     def get_announcements(self, code: str, days: int = 7) -> list[dict]:
-        """个股公告 (仅 AKShare 支持)"""
+        """个股公告"""
         for fetcher in self._fetchers:
             try:
-                if hasattr(fetcher, "get_announcements"):
-                    result = fetcher.get_announcements(code, days)
-                    if result:
-                        return result
+                result = fetcher.get_announcements(code, days)
+                if result:
+                    return result
             except Exception:
                 continue
         return []
+
+    # ── 别名方法 (与设计文档命名保持一致) ─────
+
+    def get_stock_daily(self, code: str, days: int = 60) -> list[StockDaily]:
+        """get_daily_data 的别名"""
+        return self.get_daily_data(code, days)
+
+    def get_news_sentiment(self, keyword: str, days: int = 3) -> list[dict]:
+        """get_news 的别名，情感分析由 LLM 完成"""
+        return self.get_news(keyword, days)
 
     # ── 批量操作 ─────────────────────────────
 
@@ -193,6 +219,7 @@ class UnifiedDataInterface:
                 except Exception:
                     logger.exception("batch: 获取行情失败 %s", code)
                     results[code] = None
+            del futures
         return results
 
     def batch_daily_data(
@@ -209,6 +236,7 @@ class UnifiedDataInterface:
                 except Exception:
                     logger.exception("batch: 获取日线失败 %s", code)
                     results[code] = []
+            del futures
         return results
 
     def batch_stock_info(
@@ -224,6 +252,7 @@ class UnifiedDataInterface:
                     results[code] = future.result(timeout=self._config.request_timeout)
                 except Exception:
                     results[code] = {}
+            del futures
         return results
 
     def batch_fund_flows(
@@ -239,6 +268,7 @@ class UnifiedDataInterface:
                     results[code] = future.result(timeout=self._config.request_timeout * 2)
                 except Exception:
                     results[code] = []
+            del futures
         return results
 
     # ── 数据质量 ─────────────────────────────

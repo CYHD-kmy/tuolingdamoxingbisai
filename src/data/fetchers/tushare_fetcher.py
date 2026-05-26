@@ -86,7 +86,7 @@ class TushareFetcher:
             open=d.open,
             high=d.high,
             low=d.low,
-            pre_close=d.close - d.close * d.pct_chg / (100 + d.pct_chg) if d.pct_chg != -100 else d.close * 2,
+            pre_close=d.close - d.close * d.pct_chg / (100 + d.pct_chg) if abs(d.pct_chg) < 99 else d.close * 0.5,
             pct_chg=d.pct_chg,
             volume=d.volume,
             amount=d.amount,
@@ -98,7 +98,7 @@ class TushareFetcher:
     def get_stock_name(self, code: str) -> str:
         try:
             api = self._get_api()
-            code_ts = f"{code}.SH" if code.startswith("6") else f"{code}.SZ"
+            code_ts = f"{code}.SH" if code.startswith("6") else (f"{code}.BJ" if code.startswith(("4", "8")) else f"{code}.SZ")
             df = api.stock_basic(ts_code=code_ts, fields="name")
             if df is not None and not df.empty:
                 return str(df.iloc[0]["name"])
@@ -109,7 +109,7 @@ class TushareFetcher:
     def get_stock_info(self, code: str) -> dict:
         try:
             api = self._get_api()
-            code_ts = f"{code}.SH" if code.startswith("6") else f"{code}.SZ"
+            code_ts = f"{code}.SH" if code.startswith("6") else (f"{code}.BJ" if code.startswith(("4", "8")) else f"{code}.SZ")
             df = api.stock_basic(ts_code=code_ts, fields="ts_code,name,industry,list_date")
             if df is not None and not df.empty:
                 r = df.iloc[0]
@@ -129,4 +129,12 @@ class TushareFetcher:
 
     def get_market_snapshot(self) -> list[MarketSnapshot]:
         """Tushare 不支持全市场快照，返回空"""
+        return []
+
+    def get_news(self, keyword: str, days: int = 3) -> list[dict]:
+        """Tushare 不支持新闻搜索"""
+        return []
+
+    def get_announcements(self, code: str, days: int = 7) -> list[dict]:
+        """Tushare 不支持公告查询"""
         return []

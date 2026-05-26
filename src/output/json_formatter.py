@@ -28,6 +28,7 @@ def validate_decisions(
     min_cash_reserve: float = 0.10,
     total_capital: float = 500_000.0,
     suspended_codes: set[str] | None = None,
+    verdicts: dict[str, Any] | None = None,
 ) -> list[FinalDecision]:
     """硬约束校验并裁剪决策。委托到共享校验模块。"""
     return validate_and_clip(
@@ -36,4 +37,5 @@ def validate_decisions(
         total_capital=total_capital,
         min_cash_reserve=min_cash_reserve,
         suspended_codes=suspended_codes,
+        verdicts=verdicts,
     )

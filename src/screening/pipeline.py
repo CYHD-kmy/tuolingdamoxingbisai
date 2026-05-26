@@ -74,9 +74,9 @@ class ScreeningPipeline:
         logger.info("1/5 全市场快照: %d 只", total)
 
         # ── 2. 基础过滤 (ST/停牌/新股) ──────────
-        # 少量获取基本信息用于新股过滤
-        codes_all = extract_codes(snapshots[:200])  # 前200只用做样本获取基础信息，实际新股数量很少
-        stock_infos = self._data.batch_stock_info(codes_all[:50]) if codes_all else {}
+        # 批量获取全部股票基本信息用于新股过滤
+        codes_all = extract_codes(snapshots)
+        stock_infos = self._data.batch_stock_info(codes_all) if codes_all else {}
 
         tradable = filter_tradable(snapshots, stock_infos)
         logger.info("2/5 可交易过滤: %d 只", len(tradable))

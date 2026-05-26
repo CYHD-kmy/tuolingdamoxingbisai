@@ -29,8 +29,8 @@ _detect_python() {
         "$PROJECT_DIR/venv/bin/python" \
         "/opt/anaconda3/bin/python3" \
         "/usr/local/bin/python3" \
-        "$(which python3 2>/dev/null)" \
-        "$(which python 2>/dev/null)"; do
+        "$(command -v python3 2>/dev/null)" \
+        "$(command -v python 2>/dev/null)"; do
         if [ -x "$candidate" ] && "$candidate" -c "import uvicorn" 2>/dev/null; then
             echo "$candidate"
             return 0
@@ -121,6 +121,9 @@ status() {
 install() {
     echo "安装 launchd 开机自启服务..."
 
+    # 如果已加载，先卸载
+    launchctl unload "$PLIST_DST" 2>/dev/null || true
+
     # 获取 Python 绝对路径
     PYTHON_ABS="$("$PYTHON" -c 'import sys; print(sys.executable)')"
 
@@ -185,6 +188,7 @@ PLIST_EOF
         # 更稳健的做法是用 shell 包装启动命令
         _install_with_env
     else
+        launchctl unload "$PLIST_DST" 2>/dev/null || true
         launchctl load "$PLIST_DST"
     fi
 
@@ -204,15 +208,15 @@ PLIST_EOF
 _install_with_env() {
     # 使用 shell 包装来加载 .env 环境变量
     local WRAPPER="$PROJECT_DIR/.launchd_wrapper.sh"
-    cat > "$WRAPPER" << 'WRAPPER_EOF'
+    cat > "$WRAPPER" << WRAPPER_EOF
 #!/bin/bash
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-if [ -f "$SCRIPT_DIR/.env" ]; then
+SCRIPT_DIR="\$(cd "\$(dirname "\$0")" && pwd)"
+if [ -f "\$SCRIPT_DIR/.env" ]; then
     set -a
-    source "$SCRIPT_DIR/.env"
+    source "\$SCRIPT_DIR/.env"
     set +a
 fi
-exec python3 -m uvicorn src.api.server:app --host "${ZHITOU_HOST:-0.0.0.0}" --port "${ZHITOU_PORT:-8000}" --log-level "${ZHITOU_LOG_LEVEL:-info}"
+exec $PYTHON -m uvicorn src.api.server:app --host "\${ZHITOU_HOST:-0.0.0.0}" --port "\${ZHITOU_PORT:-8000}" --log-level "\${ZHITOU_LOG_LEVEL:-info}"
 WRAPPER_EOF
     chmod +x "$WRAPPER"
 
@@ -248,6 +252,7 @@ WRAPPER_EOF
 </plist>
 PLIST_EOF
 
+    launchctl unload "$PLIST_DST" 2>/dev/null || true
     launchctl load "$PLIST_DST"
 }
 

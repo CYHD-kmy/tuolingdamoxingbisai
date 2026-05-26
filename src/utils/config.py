@@ -11,7 +11,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
-_PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+def _project_root() -> Path:
+    """惰性计算项目根目录 (避免 import-time 副作用)."""
+    return Path(__file__).resolve().parent.parent.parent
 
 
 def _env_bool(key: str, default: bool = False) -> bool:
@@ -69,16 +71,20 @@ class Config:
     llm_api_key: str = field(
         default_factory=lambda: os.getenv("LLM_API_KEY", "")
     )
-    llm_temperature: float = 0.3
-    llm_max_tokens: int = 4096
+    llm_temperature: float = field(
+        default_factory=lambda: float(os.getenv("LLM_TEMPERATURE", "0.3"))
+    )
+    llm_max_tokens: int = field(
+        default_factory=lambda: int(os.getenv("LLM_MAX_TOKENS", "4096"))
+    )
 
     # ── 辩论 ────────────────────────────────────
-    max_debate_rounds: int = 2
+    max_debate_rounds: int = 3
     max_analyst_tool_calls: int = 3
 
     # ── 输出 ────────────────────────────────────
     results_dir: str = field(
-        default_factory=lambda: str(_PROJECT_ROOT / "results")
+        default_factory=lambda: str(_project_root() / "results")
     )
     save_trace: bool = True
 

@@ -35,19 +35,31 @@ PLATFORM = platform.system()  # "Darwin" / "Linux" / "Windows"
 
 
 def _load_env():
-    """加载 .env 文件"""
+    """加载 .env 文件 (处理引号、转义和内联注释)"""
     env_file = PROJECT_DIR / ".env"
     if not env_file.exists():
         return
     with open(env_file, encoding="utf-8") as f:
-        for line in f:
-            line = line.strip()
+        for raw_line in f:
+            line = raw_line.strip()
             if not line or line.startswith("#") or "=" not in line:
                 continue
             key, _, val = line.partition("=")
-            key, val = key.strip(), val.strip().strip('"').strip("'")
-            if key and key not in os.environ:
-                os.environ[key] = val
+            key = key.strip()
+            if key in os.environ:
+                continue
+            val = val.strip()
+            # 移除内联注释 (仅在不处于引号内时)
+            if val and val[0] in ('"', "'"):
+                quote = val[0]
+                end_idx = val.find(quote, 1)
+                if end_idx != -1:
+                    val = val[1:end_idx]
+                else:
+                    val = val[1:]
+            elif "#" in val:
+                val = val.split("#")[0].strip()
+            os.environ[key] = val
 
 
 def _detect_python() -> str:
@@ -250,6 +262,9 @@ exec {python} -m uvicorn src.api.server:app --host "{HOST}" --port "{PORT}" --lo
     }
 
     plist_path.write_bytes(plistlib.dumps(plist))
+    # 先卸载再加载，避免重复加载报错
+    subprocess.run(["launchctl", "unload", str(plist_path)],
+                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     subprocess.run(["launchctl", "load", str(plist_path)], check=True)
 
     print("已安装 launchd 开机自启服务！")

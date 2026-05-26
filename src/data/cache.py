@@ -1,17 +1,24 @@
 """
-简单数据缓存 - 基于字典的 TTL 缓存。
+数据缓存 — 基于字典的 TTL 缓存 + JSON 文件持久化。
 
 设计原则:
 - 优先复用已有项目模式，保持简洁
 - TTL 自动过期，手动刷新
+- 磁盘持久化保证重启后可恢复最近缓存
 """
 
+import json
+import logging
+import os
 import time
 from dataclasses import dataclass
+from pathlib import Path
 from threading import RLock
 from typing import Any, Optional
 
 from ..utils.config import get_config
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -22,12 +29,59 @@ class CacheEntry:
 
 
 class DataCache:
-    """线程安全的 TTL 缓存。"""
+    """线程安全的 TTL 缓存，支持磁盘持久化。"""
 
     def __init__(self) -> None:
         self._store: dict[str, CacheEntry] = {}
         self._lock = RLock()
         self._config = get_config()
+        self._persist_path = Path(self._config.results_dir) / ".cache.json"
+        self._load_from_disk()
+
+    # ── 磁盘持久化 ──────────────────────────
+
+    def _load_from_disk(self) -> None:
+        """从磁盘恢复缓存"""
+        try:
+            if self._persist_path.exists():
+                with open(self._persist_path, "r", encoding="utf-8") as f:
+                    raw = json.load(f)
+                loaded = 0
+                now = time.time()
+                for key, entry in raw.items():
+                    # 跳过已过期的条目
+                    if now - entry["created_at"] > entry["ttl"]:
+                        continue
+                    self._store[key] = CacheEntry(
+                        data=entry["data"],
+                        created_at=entry["created_at"],
+                        ttl=entry["ttl"],
+                    )
+                    loaded += 1
+                if loaded:
+                    logger.info("缓存: 从磁盘恢复 %d 条记录", loaded)
+        except Exception:
+            logger.debug("缓存: 磁盘加载失败，使用空缓存")
+            self._store.clear()
+
+    def _save_to_disk(self) -> None:
+        """持久化到磁盘 (全程持锁，防止并发写入)"""
+        try:
+            self._persist_path.parent.mkdir(parents=True, exist_ok=True)
+            with self._lock:
+                payload = {}
+                for key, entry in self._store.items():
+                    payload[key] = {
+                        "data": entry.data,
+                        "created_at": entry.created_at,
+                        "ttl": entry.ttl,
+                    }
+                with open(self._persist_path, "w", encoding="utf-8") as f:
+                    json.dump(payload, f, ensure_ascii=False, default=str)
+        except Exception:
+            logger.debug("缓存: 磁盘保存失败", exc_info=True)
+
+    # ── 基本操作 ─────────────────────────────
 
     def _make_key(self, prefix: str, *parts: str) -> str:
         return f"{prefix}:{':'.join(parts)}"
@@ -57,6 +111,8 @@ class DataCache:
                 for k in keys:
                     del self._store[k]
 
+    # ── 便捷方法 ─────────────────────────────
+
     def daily_data(self, code: str) -> Optional[Any]:
         return self.get("daily", code)
 
@@ -74,3 +130,32 @@ class DataCache:
 
     def set_fundamentals(self, code: str, data: Any) -> None:
         self.set("fundamental", data, self._config.cache_ttl_fundamental, code)
+
+    # ── 生命周期 ─────────────────────────────
+
+    def persist(self) -> None:
+        """显式触发磁盘持久化"""
+        self._save_to_disk()
+
+    def __del__(self) -> None:
+        """析构时自动持久化 (最佳努力)"""
+        try:
+            self._save_to_disk()
+        except Exception:
+            pass
+
+
+# 注册 atexit 确保正常退出时持久化
+import atexit
+_global_cache: DataCache | None = None
+
+
+def _persist_global_cache() -> None:
+    if _global_cache is not None:
+        try:
+            _global_cache._save_to_disk()
+        except Exception:
+            pass
+
+
+atexit.register(_persist_global_cache)

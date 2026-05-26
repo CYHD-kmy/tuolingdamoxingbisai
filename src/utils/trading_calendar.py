@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 # 2026 年中国法定节假日 (国务院已公布)
 # 元旦: 1月1-3日 / 春节: 2月15-21日 / 清明节: 4月5-7日
 # 劳动节: 5月1-5日 / 端午节: 6月19-21日 / 中秋节+国庆节: 9月25日-10月8日
-_HOLIDAYS_2026: set[str] = set()
+_HOLIDAYS_CACHE: dict[int, set[str]] = {}
 
 _FIXED_HOLIDAYS: dict[int, list[tuple[int, int]]] = {
     2026: [
@@ -32,20 +32,25 @@ _FIXED_HOLIDAYS: dict[int, list[tuple[int, int]]] = {
 
 
 def _build_holidays(year: int) -> set[str]:
-    """构建指定年份的节假日集合"""
+    """构建指定年份的节假日集合 (结果缓存)"""
+    if year in _HOLIDAYS_CACHE:
+        return _HOLIDAYS_CACHE[year]
     holidays: set[str] = set()
     if year in _FIXED_HOLIDAYS:
         for m, d in _FIXED_HOLIDAYS[year]:
             holidays.add(date(year, m, d).isoformat())
+    _HOLIDAYS_CACHE[year] = holidays
     return holidays
 
 
 def _get_holidays(year: int) -> set[str]:
-    global _HOLIDAYS_2026
-    if year == 2026 and not _HOLIDAYS_2026:
-        _HOLIDAYS_2026 = _build_holidays(2026)
-    if year == 2026:
-        return _HOLIDAYS_2026
+    if year in _HOLIDAYS_CACHE:
+        return _HOLIDAYS_CACHE[year]
+    if year not in _FIXED_HOLIDAYS:
+        logger.warning(
+            "交易日历: %d 年无硬编码节假日数据，所有工作日均视为交易日。"
+            "建议使用 akshare.tool_trade_date_hist_sina() 获取官方交易日历。", year
+        )
     return _build_holidays(year)
 
 

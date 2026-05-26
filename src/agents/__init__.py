@@ -1,5 +1,6 @@
 from .base import BaseAnalyst, AnalystReport
 from .models import ResearchVerdict, PositionLimit, FinalDecision, PortfolioResult, DebateResult
+from .tools import tools_for
 from .analysts.technical import TechnicalAnalyst
 from .analysts.fundamentals import FundamentalsAnalyst
 from .analysts.fund_flow import FundFlowAnalyst

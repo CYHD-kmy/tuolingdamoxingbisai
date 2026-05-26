@@ -144,10 +144,14 @@ class BaseAnalyst(ABC):
                 role="assistant", content=resp.content or "",
                 tool_calls=resp.tool_calls,
             ))
-            for tr, tc in zip(round_results, resp.tool_calls):
-                messages.append(Message(
-                    role="tool", content=tr.result, tool_call_id=tc.id,
-                ))
+            for i, tc in enumerate(resp.tool_calls):
+                if i < len(round_results):
+                    tr = round_results[i]
+                    messages.append(Message(
+                        role="tool", content=tr.result, tool_call_id=tc.id,
+                    ))
+                else:
+                    logger.warning("%s: tool_call[%d] 无对应执行结果，跳过", self.analyst_type, i)
 
             logger.debug("%s: 第%d轮工具调用完成", self.analyst_type, round_idx + 1)
 
@@ -160,14 +164,22 @@ class BaseAnalyst(ABC):
     def _execute_tool(self, name: str, args: dict[str, Any], call_id: str = "") -> ToolResult:
         """执行数据查询工具，返回 ToolResult"""
         code = args.get("code", "")
-        days = int(args.get("days", 30))
+        # 各工具声明的默认 days 值不同
+        _DEFAULT_DAYS: dict[str, int] = {
+            "get_daily_data": 30,
+            "get_fund_flow": 5,
+            "get_news": 3,
+            "get_announcements": 7,
+        }
+        days = int(args.get("days", _DEFAULT_DAYS.get(name, 30)))
 
         try:
             if name == "get_daily_data":
                 data = self._data.get_daily_data(code, days=days)
+                limit = min(days, len(data))
                 return ToolResult(
                     call_id=call_id, name=name,
-                    result=json.dumps([_daily_to_dict(d) for d in data[-5:]], ensure_ascii=False),
+                    result=json.dumps([_daily_to_dict(d) for d in data[-limit:]], ensure_ascii=False),
                 )
 
             elif name == "get_realtime_quote":
@@ -222,7 +234,7 @@ class BaseAnalyst(ABC):
             data.setdefault("code", code)
             data.setdefault("name", name)
             return AnalystReport.from_json(data)
-        except (json.JSONDecodeError, ValueError) as e:
+        except json.JSONDecodeError as e:
             logger.warning("%s: JSON 解析失败, 使用文本兜底: %s", self.analyst_type, e)
             return AnalystReport(
                 analyst_type=self.analyst_type,

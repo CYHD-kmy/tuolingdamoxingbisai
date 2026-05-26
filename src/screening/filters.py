@@ -95,29 +95,29 @@ def filter_liquidity(
 
 def filter_volatility(
     daily_data: dict[str, list],
-    max_volatility_pct: float | None = None,
+    threshold: float | None = None,
 ) -> set[str]:
     """
     剔除近期波动异常剧烈的股票。
 
     daily_data: {code: [StockDaily, ...]}
-    max_volatility_pct: 单日涨跌幅绝对值上限 (默认从 Config 读取)
+    threshold: 单日涨跌幅绝对值上限 (默认从 Config 读取)
 
     返回: 应被剔除的 code 集合
     """
-    if max_volatility_pct is None:
-        max_volatility_pct = get_config().max_volatility_pct
+    if threshold is None:
+        threshold = get_config().max_volatility_pct
 
     excluded: set[str] = set()
     for code, records in daily_data.items():
         if not records:
             continue
         for r in records:
-            if abs(r.pct_chg) > max_volatility_pct:
+            if abs(r.pct_chg) > threshold:
                 excluded.add(code)
                 break
 
-    logger.info("filter_volatility: 剔除 %d 只异常波动股 (阈值 %.1f%%)", len(excluded), max_volatility_pct)
+    logger.info("filter_volatility: 剔除 %d 只异常波动股 (阈值 %.1f%%)", len(excluded), threshold)
     return excluded
 
 

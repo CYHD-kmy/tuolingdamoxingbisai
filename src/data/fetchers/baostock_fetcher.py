@@ -22,17 +22,25 @@ class BaoStockFetcher:
     name = "baostock"
 
     _logged_in = False
+    _login_attempted = False
 
     @classmethod
     def _ensure_login(cls):
         if cls._logged_in:
             return
-        import baostock as bs
-        lg = bs.login()
-        if lg.error_code != "0":
-            logger.warning("baostock 登录失败: %s", lg.error_msg)
+        if cls._login_attempted:
             return
-        cls._logged_in = True
+        import baostock as bs
+        for attempt in range(3):
+            lg = bs.login()
+            if lg.error_code == "0":
+                cls._logged_in = True
+                return
+            if attempt < 2:
+                import time
+                time.sleep(2 ** attempt)
+        cls._login_attempted = True
+        logger.warning("baostock 登录失败 (已重试3次): %s", lg.error_msg)
 
     @classmethod
     def _logout(cls):
@@ -42,10 +50,11 @@ class BaoStockFetcher:
         bs.logout()
         cls._logged_in = False
 
+
     @staticmethod
     def _bs_code(code: str) -> str:
         """转 BaoStock 格式: sh.600519 / sz.000858"""
-        prefix = "sh" if code.startswith(("6", "9")) else "sz"
+        prefix = "sh" if code.startswith(("6", "9")) else ("bj" if code.startswith(("4", "8")) else "sz")
         return f"{prefix}.{code}"
 
     def get_daily_data(self, code: str, days: int = 60) -> list[StockDaily]:
@@ -145,3 +154,15 @@ class BaoStockFetcher:
     def get_market_snapshot(self) -> list:
         """BaoStock 不支持全市场快照"""
         return []
+
+    def get_news(self, keyword: str, days: int = 3) -> list[dict]:
+        """BaoStock 不支持新闻搜索"""
+        return []
+
+    def get_announcements(self, code: str, days: int = 7) -> list[dict]:
+        """BaoStock 不支持公告查询"""
+        return []
+
+
+import atexit
+atexit.register(BaoStockFetcher._logout)

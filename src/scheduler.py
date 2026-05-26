@@ -31,7 +31,11 @@ def _get_schedule_time() -> tuple[int, int]:
 
 def run_once() -> None:
     """立即执行一次完整流水线"""
-    from src.main import main
+    try:
+        from src.main import main
+    except ImportError as e:
+        logger.error("无法导入 src.main: %s。请确保在项目根目录下运行。", e)
+        return
 
     logger.info("调度器: 立即执行一次")
     main(demo=False)
@@ -79,14 +83,14 @@ def run_scheduled() -> None:
         if not running:
             break
 
-        # 检查是否为交易日 (尝试导入交易日历)
+        # 检查是否为交易日
         try:
             from src.utils.trading_calendar import is_trading_day
             if not is_trading_day(datetime.now()):
                 logger.info("今日非交易日，跳过")
                 continue
-        except ImportError:
-            pass  # 交易日历不可用时，每天执行
+        except Exception:
+            logger.warning("交易日历不可用，默认每日执行", exc_info=True)
 
         logger.info("===== 定时触发开始 =====")
         try:

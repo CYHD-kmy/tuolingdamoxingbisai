@@ -125,15 +125,37 @@ def _section_portfolio(state: PipelineState) -> list[str]:
         lines.append("")
         return lines
 
-    lines.append("| 代码 | 名称 | 股数 | 仓位上限 | 波动率 |")
-    lines.append("|------|------|------|----------|--------|")
+    lines.append("| 代码 | 名称 | 股数 | 入场价 | 现价 | 浮动盈亏 | 仓位上限 |")
+    lines.append("|------|------|------|--------|------|----------|----------|")
     for d in state.final_result.decisions:
         limit = state.position_limits.get(d.symbol)
         max_pct = f"{limit.max_position_pct:.0%}" if limit else "-"
-        vol = f"{limit.volatility:.1f}%" if limit else "-"
-        lines.append(f"| {d.symbol} | {d.symbol_name} | {d.volume} | {max_pct} | {vol} |")
+
+        # 获取入场价和当前价
+        entry = d.entry_price if d.entry_price > 0 else _lookup_price(d.symbol, state.daily_data)
+        current = _lookup_price(d.symbol, state.daily_data)
+
+        if entry > 0 and current > 0:
+            pnl = (current - entry) * d.volume
+            pnl_pct = (current / entry - 1) * 100
+            pnl_str = f"¥{pnl:+,.0f} ({pnl_pct:+.1f}%)"
+        else:
+            pnl_str = "-"
+
+        entry_str = f"¥{entry:.2f}" if entry > 0 else "-"
+        current_str = f"¥{current:.2f}" if current > 0 else "-"
+
+        lines.append(f"| {d.symbol} | {d.symbol_name} | {d.volume} | {entry_str} | {current_str} | {pnl_str} | {max_pct} |")
     lines.append("")
     return lines
+
+
+def _lookup_price(code: str, daily_data: dict[str, list]) -> float:
+    """从日线数据中查找最新价格"""
+    records = daily_data.get(code, [])
+    if not records:
+        return 0.0
+    return records[-1].close
 
 
 def _section_watchlist(state: PipelineState) -> list[str]:

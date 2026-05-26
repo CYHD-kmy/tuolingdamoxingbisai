@@ -78,28 +78,28 @@ class RealtimeQuote:
 
 @dataclass
 class FundFlow:
-    """资金流向"""
+    """资金流向 (单位: 万元, 数据来源于东方财富)"""
     date: str
-    main_net_inflow: float   # 主力净流入 (万)
-    super_large_net: float   # 超大单净流入
-    large_net: float         # 大单净流入
-    medium_net: float        # 中单净流入
-    small_net: float         # 小单净流入
+    main_net_inflow: float   # 主力净流入 (万元)
+    super_large_net: float   # 超大单净流入 (万元)
+    large_net: float         # 大单净流入 (万元)
+    medium_net: float        # 中单净流入 (万元)
+    small_net: float         # 小单净流入 (万元)
     main_pct: float = 0.0    # 主力净流入占比 %
 
 
 @dataclass
 class MarketSnapshot:
-    """全市场快照"""
+    """全市场快照 (amount: 元, total_mv: 亿元, 数据来源于东方财富)"""
     code: str
     name: str
     price: float
     pct_chg: float
     volume_ratio: float
     turnover: float
-    amount: float
+    amount: float            # 成交额 (元)
     pe: float = 0.0
-    total_mv: float = 0.0
+    total_mv: float = 0.0    # 总市值 (亿元)
 
 
 # ── Fetcher ────────────────────────────────────
@@ -123,11 +123,12 @@ class AKShareFetcher:
         time.sleep(random.uniform(1.0, 3.0))
 
     def _retry(self, fn, *args, max_tries: int = 3, **kwargs):
-        """指数退避重试"""
+        """指数退避重试 (首次不等待)"""
         last_err = None
         for attempt in range(max_tries):
             try:
-                self._sleep()
+                if attempt > 0:
+                    self._sleep()
                 return fn(*args, **kwargs)
             except Exception as e:
                 last_err = e
@@ -220,7 +221,7 @@ class AKShareFetcher:
     def _eastmoney_code(code: str) -> str:
         """转为东方财富代码格式 (sh600519 / sz000858)"""
         code = AKShareFetcher._normalize_code(code)
-        prefix = "sh" if code.startswith(("6", "9")) else "sz"
+        prefix = "sh" if code.startswith(("6", "9")) else ("bj" if code.startswith(("4", "8")) else "sz")
         return f"{prefix}{code}"
 
     def _fetch_daily_from_eastmoney(self, code: str, days: int) -> pd.DataFrame:
@@ -307,7 +308,10 @@ class AKShareFetcher:
                 logger.debug("akshare: 刷新全市场快照缓存 (%d 条)", len(AKShareFetcher._spot_cache))
 
             df = AKShareFetcher._spot_cache
-            row = df[df["代码"] == em_code]
+            # 兼容 akshare 不同版本的代码格式 (sh600519 / 600519)
+            code_digits = self._normalize_code(code)
+            mask = df["代码"].str.replace(r"[^0-9]", "", regex=True) == code_digits
+            row = df[mask]
             if row.empty:
                 raise ValueError(f"代码 {em_code} 未找到")
             r = row.iloc[0]
@@ -365,7 +369,9 @@ class AKShareFetcher:
 
         em_code = self._eastmoney_code(code)
         df = ak.stock_zh_a_spot_em()
-        row = df[df["代码"] == em_code]
+        code_digits = self._normalize_code(code)
+        mask = df["代码"].str.replace(r"[^0-9]", "", regex=True) == code_digits
+        row = df[mask]
         if row.empty:
             return {}
         r = row.iloc[0]
@@ -526,12 +532,11 @@ class AKShareFetcher:
 
         # 备选: 使用东方财富关键词搜索 (适用于非代码关键词)
         try:
+            from urllib.parse import urlencode
             em_code = self._eastmoney_code(keyword) if keyword.isdigit() else ""
             symbol = em_code or keyword
-            url = (
-                "https://search-api-web.eastmoney.com/search/jsonp"
-                f"?cb=callback&keyword={symbol}&pageindex=1&pagesize=15"
-            )
+            params = urlencode({"cb": "callback", "keyword": symbol, "pageindex": 1, "pagesize": 15})
+            url = f"https://search-api-web.eastmoney.com/search/jsonp?{params}"
             import requests as _requests
             resp = _requests.get(url, timeout=10, headers={
                 "Referer": "https://so.eastmoney.com/",

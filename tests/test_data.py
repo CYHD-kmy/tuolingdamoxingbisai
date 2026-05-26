@@ -156,13 +156,19 @@ def test_eastmoney_code_sz():
 def test_spot_cache_class_attribute():
     """全市场快照缓存: 类属性初始状态"""
     from src.data.fetchers.akshare_fetcher import AKShareFetcher
-    # 测试前清除缓存
-    AKShareFetcher._spot_cache = None
-    AKShareFetcher._spot_cache_time = 0.0
+    # 保存并恢复，避免污染其他测试
+    saved_cache = AKShareFetcher._spot_cache
+    saved_time = AKShareFetcher._spot_cache_time
+    try:
+        AKShareFetcher._spot_cache = None
+        AKShareFetcher._spot_cache_time = 0.0
 
-    assert AKShareFetcher._spot_cache is None
-    assert AKShareFetcher._spot_cache_time == 0.0
-    assert AKShareFetcher._SPOT_CACHE_TTL == 60.0
+        assert AKShareFetcher._spot_cache is None
+        assert AKShareFetcher._spot_cache_time == 0.0
+        assert AKShareFetcher._SPOT_CACHE_TTL == 60.0
+    finally:
+        AKShareFetcher._spot_cache = saved_cache
+        AKShareFetcher._spot_cache_time = saved_time
 
 
 if __name__ == "__main__":

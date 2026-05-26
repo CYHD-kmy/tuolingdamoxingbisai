@@ -106,10 +106,11 @@ class PortfolioManager:
         ]
 
         resp = self._llm.chat(messages)
-        decisions = self._parse_decisions(resp.content)
+        decisions = self._parse_decisions(resp.content, daily_data)
 
-        # 校验和裁剪
-        decisions = self._validate(decisions, limits, daily_data, cash_available, total_capital)
+        # 校验和裁剪 (传入 verdicts 供置信度排序)
+        verdict_map = {v.code: v for v in verdicts}
+        decisions = self._validate(decisions, limits, daily_data, cash_available, total_capital, verdict_map)
 
         cash_used = sum(
             d.volume * self._get_price(d.symbol, daily_data)
@@ -167,20 +168,23 @@ class PortfolioManager:
         return get_latest_price(code, daily_data)
 
     @staticmethod
-    def _parse_decisions(raw: str) -> list[FinalDecision]:
-        """解析 LLM 输出的 JSON 决策"""
+    def _parse_decisions(raw: str, daily_data: dict[str, list] | None = None) -> list[FinalDecision]:
+        """解析 LLM 输出的 JSON 决策，并填充入场价格"""
         try:
             data = json.loads(extract_json(raw))
             if not isinstance(data, list):
                 return []
-            return [
-                FinalDecision(
-                    symbol=str(d.get("symbol", "")),
+            result = []
+            for d in data:
+                code = str(d.get("symbol", ""))
+                entry_price = get_latest_price(code, daily_data or {})
+                result.append(FinalDecision(
+                    symbol=code,
                     symbol_name=str(d.get("symbol_name", "")),
                     volume=int(d.get("volume", 0)),
-                )
-                for d in data
-            ]
+                    entry_price=entry_price,
+                ))
+            return result
         except (json.JSONDecodeError, ValueError, KeyError):
             logger.warning("PortfolioManager: JSON 解析失败")
             return []
@@ -192,6 +196,7 @@ class PortfolioManager:
         daily_data: dict[str, list],
         cash_available: float,
         total_capital: float,
+        verdicts: dict[str, ResearchVerdict] | None = None,
     ) -> list[FinalDecision]:
         """校验并裁剪决策，委托到共享校验模块"""
         return validate_and_clip(
@@ -199,4 +204,5 @@ class PortfolioManager:
             cash_available=cash_available,
             total_capital=total_capital,
             min_cash_reserve=0.10,
+            verdicts=verdicts,
         )

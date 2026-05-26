@@ -10,8 +10,6 @@
 import sys
 import os
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-
 from src.demo import generate_demo_state
 from src.output.json_formatter import format_decisions, validate_decisions
 from src.output.trace_logger import build_trace
@@ -39,7 +37,7 @@ def test_demo_state_structure():
     for code, reports in state.analyst_reports.items():
         assert len(reports) == 4  # 四维分析师各一份
         for r in reports:
-            assert r.analyst_type in ("technical", "fundamentals", "fund_flow", "news_sentiment")
+            assert r.analyst_type in ("technical", "fundamentals", "fund_flow", "news")
             assert r.signal in ("bullish", "bearish", "neutral")
             assert 0.0 <= r.confidence <= 1.0
 

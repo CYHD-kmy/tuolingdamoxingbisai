@@ -79,6 +79,7 @@ class ScreeningScorer:
         for code in codes:
             snapshot = snapshots.get(code)
             if snapshot is None:
+                logger.warning("scorer: %s 无快照数据，跳过打分", code)
                 continue
 
             daily = daily_data.get(code, [])
@@ -287,7 +288,11 @@ class ScreeningScorer:
         daily: list[StockDaily],
     ) -> float:
         """
-        情绪替代因子 (MVP阶段): 用交易活跃度和趋势强度替代。
+        情绪替代因子: 用交易活跃度和趋势强度替代新闻情感分析。
+
+        MVP 阶段使用换手率+连续阳线作为代理指标，而非真实新闻正负面率。
+        第二阶段引入 ChromaDB + 新闻情感 LLM 分析后将替换为真实情感因子。
+
         - 换手率适中 (2%-8%) + 量比温和 → 高分
         - 换手率过高/过低 → 低分
         """

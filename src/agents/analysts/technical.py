@@ -93,7 +93,7 @@ class TechnicalAnalyst(BaseAnalyst):
         ]
 
         for d in daily[-5:]:
-            dir_mark = "🔺" if d.pct_chg > 0 else ("🔻" if d.pct_chg < 0 else "➖")
+            dir_mark = "[+]" if d.pct_chg > 0 else ("[-]" if d.pct_chg < 0 else "[=]")
             lines.append(
                 f"  {d.date}  {dir_mark} {d.pct_chg:+.2f}%  "
                 f"O:{d.open:.2f} H:{d.high:.2f} L:{d.low:.2f} C:{d.close:.2f}  "

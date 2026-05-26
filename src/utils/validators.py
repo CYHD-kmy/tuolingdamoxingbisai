@@ -32,28 +32,60 @@ def extract_json(text: str) -> str:
 
     # 1. JSON 代码块
     if "```json" in text:
-        start = text.index("```json") + 7
-        end = text.index("```", start)
-        return text[start:end].strip()
+        try:
+            start = text.index("```json") + 7
+            end = text.index("```", start)
+            return text[start:end].strip()
+        except ValueError:
+            pass  # 标记不配对，回退到后续策略
 
     # 2. 普通代码块
     if "```" in text:
-        start = text.index("```") + 3
-        end = text.index("```", start)
-        return text[start:end].strip()
+        try:
+            start = text.index("```") + 3
+            end = text.index("```", start)
+            return text[start:end].strip()
+        except ValueError:
+            pass
 
-    # 3. 直接匹配 JSON 对象/数组 (先数组后对象, 因为数组可含对象)
-    if "[" in text and "]" in text:
-        start = text.index("[")
-        end = text.rindex("]") + 1
-        return text[start:end]
-
-    if "{" in text and "}" in text:
-        start = text.index("{")
-        end = text.rindex("}") + 1
-        return text[start:end]
+    # 3. 平衡括号匹配 (避免跨多个 JSON 对象时的交叉污染)
+    json_str = _find_balanced(text, "[", "]")
+    if json_str:
+        return json_str
+    json_str = _find_balanced(text, "{", "}")
+    if json_str:
+        return json_str
 
     return text
+
+
+def _find_balanced(text: str, open_c: str, close_c: str) -> str:
+    """从 text 中找到第一个由 open_c/close_c 平衡包裹的子串。"""
+    start = text.find(open_c)
+    if start == -1:
+        return ""
+    depth = 0
+    in_string = False
+    escape = False
+    for i, ch in enumerate(text[start:], start):
+        if escape:
+            escape = False
+            continue
+        if ch == '\\':
+            escape = True
+            continue
+        if ch == '"':
+            in_string = not in_string
+            continue
+        if in_string:
+            continue
+        if ch == open_c:
+            depth += 1
+        elif ch == close_c:
+            depth -= 1
+            if depth == 0:
+                return text[start:i + 1]
+    return ""
 
 
 def get_latest_price(code: str, daily_data: dict[str, list[Any]]) -> float:
@@ -72,14 +104,32 @@ def validate_and_clip(
     total_capital: float = 500_000.0,
     min_cash_reserve: float = 0.10,
     suspended_codes: set[str] | None = None,
+    verdicts: dict[str, Any] | None = None,
 ) -> list[Any]:
     """
     硬约束校验并裁剪决策。
+
+    decisions: 最终决策列表
+    limits: {code: PositionLimit} 风控仓位约束
+    daily_data: {code: [StockDaily]} 日线数据
+    cash_available: 可用现金
+    total_capital: 总资金
+    min_cash_reserve: 最低现金保留比例
+    suspended_codes: 已停牌股票代码集合
+    verdicts: {code: ResearchVerdict} 可选的研判结论，用于按置信度排序
 
     返回: 通过校验的有效决策列表 (保持原始决策对象类型)
     """
     if not decisions:
         return []
+
+    # 按置信度降序排列，高置信度优先分配预算
+    if verdicts:
+        def _confidence(d: Any) -> float:
+            code = d.symbol if hasattr(d, "symbol") else d.get("symbol", "")
+            v = verdicts.get(code)
+            return v.confidence if hasattr(v, "confidence") else 0.0
+        decisions = sorted(decisions, key=_confidence, reverse=True)
 
     valid: list[Any] = []
     total_cost = 0.0
