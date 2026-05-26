@@ -102,8 +102,8 @@ python -m src.api.server
 | 模块 | 路径 | 说明 |
 |------|------|------|
 | 数据层 | `src/data/` | 多源降级编排 (AKShare → Tushare → BaoStock) + 缓存 + 数据质量标记 (live/cached/fallback/stale) |
-| 海选筛选 | `src/screening/` | ST/停牌/新股过滤 + 10因子加权打分 + ETF筛选 |
-| 分析Agent | `src/agents/` | 技术面/基本面/资金面/消息面 四维分析 + 多空辩论 + 管理团队 |
+| 海选筛选 | `src/screening/` | ST/停牌/新股过滤 + 10因子加权打分 + ETF筛选 (ETF模块已实现，待接入主流水线) |
+| 分析Agent | `src/agents/` | 技术面/基本面/资金面/消息面 四维分析 + ETF分析师 + 多空辩论 + 管理团队 |
 | 工作流 | `src/graph/` | LangGraph 状态管理 + 流水线编排 |
 | LLM 适配 | `src/llm/` | OpenAI-compatible 客户端 (DeepSeek/OpenAI)，quick/deep 分层 |
 | 输出层 | `src/output/` | JSON 格式化 + 约束校验 + Markdown 日报 + 追踪日志 |
@@ -111,10 +111,10 @@ python -m src.api.server
 | 降级策略 | `src/agents/fallback.py` | LLM 不可用时确定性规则引擎接管全链路 |
 | 持仓追踪 | `src/agents/portfolio_tracker.py` | 跨交易日持仓管理: 成本基价/浮动盈亏/行业暴露/日收益历史 |
 | 盘中监控 | `src/monitoring/` | 30s轮询: 止损(-7%)/止盈(+15%)/熔断(-5%)/Webhook告警 |
-| 记忆系统 | `src/memory/` | ChromaDB 向量存储: 历史行情索引/相似检索/置信度校准 |
+| 记忆系统 | `src/memory/` | ChromaDB 向量存储: 历史行情索引/相似检索/置信度校准 (需手动取消 requirements.txt 中 chromadb 注释以安装) |
 | 回测框架 | `src/backtesting/` | 历史回放: Sharpe/MaxDD/Calmar/ProfitFactor + JSON+MD报告 |
 | 组合优化 | `src/optimization/` | 风险平价(ERC)/最小方差/最大分散化 三种权重分配方法 |
-| 多策略 | `src/strategies/` | 5种Alpha策略并行竞争: 动量/均值回归/质量/情绪/默认10因子 |
+| 多策略 | `src/strategies/` | 5种Alpha策略并行竞争: 动量/均值回归/质量/情绪/默认10因子 (CompetitionEngine.save_performance 已实现，待接入主流程自动调用) |
 | 强化学习 | `src/rl/` | DQN智能体: 手动神经网络 + 经验回放 + 交易环境, 无PyTorch依赖 |
 | 工具 | `src/utils/` | 配置管理 / 交易日历 / 输出校验 |
 
