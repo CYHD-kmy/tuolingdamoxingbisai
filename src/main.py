@@ -146,28 +146,29 @@ def main(demo: bool = False) -> None:
         except Exception:
             logger.debug("记忆索引跳过 (chromadb 不可用或索引失败)", exc_info=True)
 
-        # 持久化持仓
-        from src.agents.portfolio_tracker import PortfolioTracker
+        # 持久化持仓 (仅非 demo 模式; demo 模式每次独立运行不跨日累加)
+        if not demo:
+            from src.agents.portfolio_tracker import PortfolioTracker
 
-        tracker = PortfolioTracker(total_capital=config.initial_capital, results_dir=config.results_dir)
-        tracker.load()
-        tracker.apply_decisions(
-            state.final_result.decisions if state.final_result else [],
-            state.daily_data,
-        )
-        tracker.update_prices(state.daily_data)
-        tracker.record_daily()
-        tracker.save()
-        logger.info("持仓已保存: %.0f%% 仓位, 累计盈亏 ¥%.0f",
-                    tracker.total_market_value() / config.initial_capital * 100,
-                    tracker.cumulative_pnl)
+            tracker = PortfolioTracker(total_capital=config.initial_capital, results_dir=config.results_dir)
+            tracker.load()
+            tracker.apply_decisions(
+                state.final_result.decisions if state.final_result else [],
+                state.daily_data,
+            )
+            tracker.update_prices(state.daily_data)
+            tracker.record_daily()
+            tracker.save()
+            logger.info("持仓已保存: %.0f%% 仓位, 累计盈亏 ¥%.0f",
+                        tracker.total_market_value() / config.initial_capital * 100,
+                        tracker.cumulative_pnl)
 
-        report_md = generate_daily_report(state, tracker)
-        date_str = datetime.now().strftime("%Y%m%d")
-        report_path = os.path.join(config.results_dir, f"report_{date_str}.md")
-        with open(report_path, "w", encoding="utf-8") as f:
-            f.write(report_md)
-        logger.info("日报已保存: %s", report_path)
+            report_md = generate_daily_report(state, tracker)
+            date_str = datetime.now().strftime("%Y%m%d")
+            report_path = os.path.join(config.results_dir, f"report_{date_str}.md")
+            with open(report_path, "w", encoding="utf-8") as f:
+                f.write(report_md)
+            logger.info("日报已保存: %s", report_path)
 
 
 if __name__ == "__main__":
