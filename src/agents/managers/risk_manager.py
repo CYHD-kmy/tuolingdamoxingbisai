@@ -41,6 +41,7 @@ class RiskManager:
         daily_data: dict[str, list[Any]],
         current_positions: dict[str, int],
         industry_map: dict[str, str] | None = None,
+        unlock_shares: dict[str, float] | None = None,
     ) -> dict[str, PositionLimit]:
         """
         为每个候选股计算仓位上限。
@@ -49,6 +50,7 @@ class RiskManager:
         daily_data: {code: [StockDaily, ...]} 用于计算波动率
         current_positions: 当前持仓 {code: shares}
         industry_map: {code: industry_name} 可选，用于行业集中度
+        unlock_shares: {code: unlock_ratio_pct} 可选，近期限售解禁占比
 
         返回: {code: PositionLimit}
         """
@@ -116,6 +118,18 @@ class RiskManager:
             turnover_warning = self._check_turnover(v.code, daily_data)
             if turnover_warning:
                 risk_flags.append(turnover_warning)
+
+            # 限售解禁检查 (近期有大额解禁 → 减仓)
+            if unlock_shares and v.code in unlock_shares:
+                unlock_pct = unlock_shares[v.code]
+                if unlock_pct > 5:
+                    final_pct *= 0.3
+                    risk_flags.append(f"近期限售解禁 {unlock_pct:.1f}% (占总股本)，大幅减仓")
+                elif unlock_pct > 2:
+                    final_pct *= 0.6
+                    risk_flags.append(f"近期限售解禁 {unlock_pct:.1f}% (占总股本)，适当减仓")
+                elif unlock_pct > 0.5:
+                    risk_flags.append(f"近期限售解禁 {unlock_pct:.1f}% (占总股本)，继续关注")
 
             # 计算最大股数 (向下取 100 的整数倍)
             max_value = self._capital * final_pct

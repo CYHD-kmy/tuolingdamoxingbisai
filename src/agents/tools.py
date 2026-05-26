@@ -64,6 +64,57 @@ TOOL_GET_ANNOUNCEMENTS = Tool(
     ],
 )
 
+TOOL_GET_NORTHBOUND = Tool(
+    name="get_northbound_flow",
+    description="获取北向资金(沪深股通)净流向：当日净流入额，沪股通/深股通分别流入",
+    parameters=[
+        ToolParam(name="days", type="integer", description="回看天数，默认 5", required=False),
+    ],
+)
+
+TOOL_GET_NORTHBOUND_STOCK = Tool(
+    name="get_northbound_stock",
+    description="获取个股沪深股通持仓变化：外资持股数量和占比变化",
+    parameters=[
+        ToolParam(name="code", type="string", description="股票代码，如 600519", required=True),
+        ToolParam(name="days", type="integer", description="回看天数，默认 10", required=False),
+    ],
+)
+
+TOOL_GET_MARGIN = Tool(
+    name="get_margin_detail",
+    description="获取个股融资融券明细：融资余额、融资买入额、融券余量变化",
+    parameters=[
+        ToolParam(name="code", type="string", description="股票代码，如 600519", required=True),
+        ToolParam(name="days", type="integer", description="回看天数，默认 10", required=False),
+    ],
+)
+
+TOOL_GET_FINANCIALS = Tool(
+    name="get_financials",
+    description="获取深度财务指标：ROE/ROA/毛利率/净利率/营收增速/利润增速/负债率/每股收益/现金流，多报告期趋势",
+    parameters=[
+        ToolParam(name="code", type="string", description="股票代码，如 600519", required=True),
+    ],
+)
+
+TOOL_GET_RESEARCH = Tool(
+    name="get_research_reports",
+    description="获取个股分析师研报：研究机构、评级、日期",
+    parameters=[
+        ToolParam(name="code", type="string", description="股票代码，如 600519", required=True),
+        ToolParam(name="days", type="integer", description="回看天数，默认 30", required=False),
+    ],
+)
+
+TOOL_GET_SHAREHOLDER = Tool(
+    name="get_shareholder_count",
+    description="获取股东人数变化趋势：股东人数增减反映筹码集中/分散程度",
+    parameters=[
+        ToolParam(name="code", type="string", description="股票代码，如 600519", required=True),
+    ],
+)
+
 
 # ── 工具集 (按分析师类型分组) ────────────────
 
@@ -71,7 +122,7 @@ def tools_for(analyst_type: str) -> list[Tool]:
     """返回指定分析师类型的工具集"""
     return {
         "technical":    [TOOL_GET_DAILY, TOOL_GET_REALTIME],
-        "fundamentals": [TOOL_GET_STOCK_INFO, TOOL_GET_DAILY, TOOL_GET_ANNOUNCEMENTS],
-        "fund_flow":    [TOOL_GET_FUND_FLOW, TOOL_GET_REALTIME],
-        "news":         [TOOL_GET_NEWS, TOOL_GET_ANNOUNCEMENTS, TOOL_GET_REALTIME],
+        "fundamentals": [TOOL_GET_STOCK_INFO, TOOL_GET_DAILY, TOOL_GET_ANNOUNCEMENTS, TOOL_GET_FINANCIALS, TOOL_GET_RESEARCH],
+        "fund_flow":    [TOOL_GET_FUND_FLOW, TOOL_GET_REALTIME, TOOL_GET_NORTHBOUND, TOOL_GET_NORTHBOUND_STOCK, TOOL_GET_MARGIN],
+        "news":         [TOOL_GET_NEWS, TOOL_GET_ANNOUNCEMENTS, TOOL_GET_REALTIME, TOOL_GET_RESEARCH],
     }.get(analyst_type, [])

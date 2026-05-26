@@ -1,9 +1,9 @@
 """
 多因子打分模型 — 从候选池中选出 Top-N 进入深度分析。
 
-8 因子加权打分:
-  趋势(15%) + 动量(10%) + 量价(15%) + 资金(20%) + 情绪(10%)
-  + 质量(5%) + 风险(10%) + 流动性(15%)
+10 因子加权打分:
+  趋势(12%) + 动量(10%) + 量价(12%) + 主力资金(15%) + 北向资金(10%)
+  + 情绪(8%) + 质量(10%) + 风险(8%) + 流动性(10%) + 筹码集中度(5%)
 
 每只股票得分 0-100，综合加权后排序取 Top-N。
 所有计算均为确定性规则，不消耗 LLM Token。
@@ -14,21 +14,23 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 
-from ..data.fetchers.akshare_fetcher import MarketSnapshot, StockDaily, FundFlow
+from ..data.fetchers.akshare_fetcher import MarketSnapshot, StockDaily, FundFlow, FinancialIndicator
 
 logger = logging.getLogger(__name__)
 
 # ── 默认因子权重 ──────────────────────────────
 
 DEFAULT_WEIGHTS = {
-    "trend":      0.15,   # 趋势: 均线多头排列
-    "momentum":   0.10,   # 动量: 近期涨幅
-    "volume_price": 0.15, # 量价: 放量上涨
-    "capital_flow": 0.20, # 资金: 主力净流入
-    "sentiment":  0.10,   # 情绪: 新闻正面率 (MVP 阶段用替代)
-    "quality":    0.05,   # 质量: PE/ROE 过滤
-    "risk":       0.10,   # 风险: 波动率适中
-    "liquidity":  0.15,   # 流动性: 日均成交额
+    "trend":          0.12,   # 趋势: 均线多头排列
+    "momentum":       0.10,   # 动量: 近期涨幅
+    "volume_price":   0.12,   # 量价: 放量上涨
+    "capital_flow":   0.15,   # 资金: 主力净流入
+    "northbound":     0.10,   # 北向: 外资持仓变化 (新增)
+    "sentiment":      0.08,   # 情绪: 交易活跃度替代
+    "quality":        0.10,   # 质量: PE合理性+ROE/毛利率+财务趋势 (增强)
+    "risk":           0.08,   # 风险: 波动率适中
+    "liquidity":      0.10,   # 流动性: 日均成交额
+    "shareholder_conc": 0.05, # 筹码集中度: 股东人数变化 (新增)
 }
 
 
@@ -71,10 +73,13 @@ class ScreeningScorer:
         snapshots: dict[str, MarketSnapshot],
         daily_data: dict[str, list[StockDaily]],
         fund_flows: dict[str, list[FundFlow]],
+        northbound_stocks: dict[str, list[dict]] | None = None,
+        financials: dict[str, list[FinancialIndicator]] | None = None,
+        shareholders: dict[str, list] | None = None,
     ) -> list[FactorScore]:
         """对候选池中所有股票进行多因子打分"""
         results = []
-        available_factors = self._available_factors(fund_flows)
+        available_factors = self._available_factors(fund_flows, northbound_stocks, financials, shareholders)
 
         for code in codes:
             snapshot = snapshots.get(code)
@@ -84,6 +89,9 @@ class ScreeningScorer:
 
             daily = daily_data.get(code, [])
             flow = fund_flows.get(code, [])
+            nb_data = (northbound_stocks or {}).get(code, [])
+            fin_data = (financials or {}).get(code, [])
+            sh_data = (shareholders or {}).get(code, [])
 
             scores = {}
             weights_used = 0.0
@@ -112,15 +120,21 @@ class ScreeningScorer:
                 scores["capital_flow"] = s
                 weights_used += self._weights["capital_flow"]
 
-            # 情绪 (MVP阶段用交易活跃度替代)
+            # 北向资金 (新增)
+            if "northbound" in available_factors:
+                s = self._score_northbound(nb_data)
+                scores["northbound"] = s
+                weights_used += self._weights["northbound"]
+
+            # 情绪 (交易活跃度替代)
             if "sentiment" in available_factors:
                 s = self._score_sentiment_proxy(snapshot, daily)
                 scores["sentiment"] = s
                 weights_used += self._weights["sentiment"]
 
-            # 质量
+            # 质量 (增强版：PE + 财务指标)
             if "quality" in available_factors:
-                s = self._score_quality(snapshot)
+                s = self._score_quality_enhanced(snapshot, fin_data)
                 scores["quality"] = s
                 weights_used += self._weights["quality"]
 
@@ -136,6 +150,12 @@ class ScreeningScorer:
                 scores["liquidity"] = s
                 weights_used += self._weights["liquidity"]
 
+            # 筹码集中度 (新增)
+            if "shareholder_conc" in available_factors:
+                s = self._score_shareholder_concentration(sh_data)
+                scores["shareholder_conc"] = s
+                weights_used += self._weights["shareholder_conc"]
+
             # 归一化权重
             composite = self._weighted_sum(scores, weights_used)
             results.append(FactorScore(code=code, name=snapshot.name, scores=scores, composite=round(composite, 1)))
@@ -150,14 +170,31 @@ class ScreeningScorer:
 
     # ── 因子可用性 ─────────────────────────────
 
-    def _available_factors(self, fund_flows: dict[str, list]) -> set[str]:
+    def _available_factors(
+        self,
+        fund_flows: dict[str, list],
+        northbound_stocks: dict[str, list[dict]] | None = None,
+        financials: dict[str, list] | None = None,
+        shareholders: dict[str, list] | None = None,
+    ) -> set[str]:
         """检测哪些因子的数据可用"""
         factors = {"trend", "momentum", "volume_price", "sentiment", "quality", "risk", "liquidity"}
-        # 检查是否有资金流向数据
         if any(v for v in fund_flows.values()):
             factors.add("capital_flow")
         else:
             logger.info("资金流向数据不可用，跳过 capital_flow 因子")
+        if northbound_stocks and any(v for v in northbound_stocks.values()):
+            factors.add("northbound")
+        else:
+            logger.info("北向资金数据不可用，跳过 northbound 因子")
+        if shareholders and any(v for v in shareholders.values()):
+            factors.add("shareholder_conc")
+        else:
+            logger.info("股东人数数据不可用，跳过 shareholder_conc 因子")
+        if financials and any(v for v in financials.values()):
+            factors.add("financials_available")  # quality 因子内部会利用 financials 增强
+        else:
+            logger.info("深度财务数据不可用，quality 因子使用基础 PE 评分")
         return factors
 
     def _weighted_sum(self, scores: dict[str, float], weights_used: float) -> float:
@@ -321,26 +358,111 @@ class ScreeningScorer:
         return max(0, min(100, score))
 
     @staticmethod
-    def _score_quality(snapshot: MarketSnapshot) -> float:
+    def _score_quality_enhanced(snapshot: MarketSnapshot, financials: list[FinancialIndicator]) -> float:
         """
-        质量因子: PE 合理性检测。
-        - PE 10-40 → 合理区间
-        - PE < 0 (亏损) → 扣分
-        - PE > 100 → 高估值扣分
+        质量因子 (增强): PE 合理性 + ROE/毛利率 + 财务趋势。
+        - PE 10-30 → 最优
+        - ROE > 15% + 趋势向上 → 加分
+        - 毛利率稳定/上升 → 加分
         """
+        score = 50.0
         pe = snapshot.pe
         if pe <= 0:
-            return 30.0
+            score -= 20
         elif pe <= 15:
-            return 80.0
+            score += 25
         elif pe <= 30:
-            return 75.0
+            score += 20
         elif pe <= 50:
-            return 60.0
+            score += 5
         elif pe <= 100:
-            return 45.0
+            score -= 10
         else:
-            return 25.0
+            score -= 20
+
+        # 财务指标增强
+        if financials:
+            latest = financials[-1]
+            if latest.roe > 20:
+                score += 12
+            elif latest.roe > 15:
+                score += 8
+            elif latest.roe > 10:
+                score += 4
+            elif latest.roe < 5:
+                score -= 8
+            if latest.gross_margin > 40:
+                score += 8
+            elif latest.gross_margin > 25:
+                score += 4
+            if latest.revenue_yoy > 15:
+                score += 5
+            elif latest.revenue_yoy < 0:
+                score -= 5
+            if latest.cf_operating > 0:
+                score += 3
+
+            # ROE 趋势 (连续上升加分)
+            if len(financials) >= 3:
+                last3 = [f.roe for f in financials[-3:]]
+                if last3[0] < last3[1] < last3[2]:
+                    score += 8
+                elif last3[1] < last3[2]:
+                    score += 4
+
+        return max(5, min(100, score))
+
+    @staticmethod
+    def _score_northbound(nb_data: list[dict]) -> float:
+        """
+        北向因子: 外资持续增持信号。
+        - 近10日连续增持 → 高分
+        - 持股占比稳定上升 → 中等
+        - 减持 → 低分
+        """
+        if not nb_data:
+            return 50.0
+        score = 50.0
+        hold_pcts = [d.get("hold_pct", 0) for d in nb_data if d.get("hold_pct")]
+        if len(hold_pcts) >= 3:
+            recent = hold_pcts[-3:]
+            if all(recent[i] < recent[i + 1] for i in range(len(recent) - 1)):
+                score += 20  # 连续增持
+            elif recent[-1] > recent[0]:
+                score += 10  # 整体增持
+            elif recent[-1] < recent[0]:
+                score -= 15  # 减持
+        latest_pct = hold_pcts[-1] if hold_pcts else 0
+        if latest_pct > 5:
+            score += 10
+        elif latest_pct > 2:
+            score += 5
+        return max(0, min(100, score))
+
+    @staticmethod
+    def _score_shareholder_concentration(sh_data: list) -> float:
+        """
+        筹码集中度因子: 股东人数下降 = 筹码集中。
+        - 连续3期下降 → 高分 (筹码集中)
+        - 下降趋势 → 中等偏上
+        - 上升趋势 → 低分 (筹码分散)
+        """
+        if not sh_data:
+            return 50.0
+        score = 50.0
+        # 获取最近几期环比变化
+        changes = [h.change_pct for h in sh_data if hasattr(h, "change_pct")]
+        if len(changes) >= 3:
+            recent = changes[-3:]
+            if all(c < 0 for c in recent):
+                score += 25  # 连续下降，筹码集中
+            elif sum(recent) < 0:
+                score += 12  # 整体下降
+            elif sum(recent) > 0:
+                score -= 15  # 分散
+        if changes and changes[-1] < -5:
+            score += 10  # 单期大幅下降
+        return max(0, min(100, score))
 
     @staticmethod
     def _score_risk(daily: list[StockDaily]) -> float:

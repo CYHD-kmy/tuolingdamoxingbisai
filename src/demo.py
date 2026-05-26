@@ -76,33 +76,33 @@ def _make_candidates() -> list[FactorScore]:
     return [
         FactorScore(code="600519", name="贵州茅台", composite=88.5, scores={
             "trend": 90, "momentum": 72, "volume_price": 85,
-            "capital_flow": 92, "sentiment": 80, "quality": 75,
-            "risk": 78, "liquidity": 95,
+            "capital_flow": 92, "northbound": 88, "sentiment": 80,
+            "quality": 85, "risk": 78, "liquidity": 95, "shareholder_conc": 75,
         }),
         FactorScore(code="000858", name="五粮液", composite=82.3, scores={
             "trend": 85, "momentum": 68, "volume_price": 78,
-            "capital_flow": 88, "sentiment": 75, "quality": 78,
-            "risk": 80, "liquidity": 90,
+            "capital_flow": 88, "northbound": 82, "sentiment": 75,
+            "quality": 82, "risk": 80, "liquidity": 90, "shareholder_conc": 70,
         }),
         FactorScore(code="300750", name="宁德时代", composite=79.8, scores={
             "trend": 78, "momentum": 82, "volume_price": 88,
-            "capital_flow": 85, "sentiment": 72, "quality": 70,
-            "risk": 60, "liquidity": 88,
+            "capital_flow": 85, "northbound": 90, "sentiment": 72,
+            "quality": 72, "risk": 60, "liquidity": 88, "shareholder_conc": 65,
         }),
         FactorScore(code="002594", name="比亚迪", composite=76.2, scores={
             "trend": 82, "momentum": 90, "volume_price": 80,
-            "capital_flow": 78, "sentiment": 75, "quality": 62,
-            "risk": 55, "liquidity": 82,
+            "capital_flow": 78, "northbound": 75, "sentiment": 75,
+            "quality": 68, "risk": 55, "liquidity": 82, "shareholder_conc": 60,
         }),
         FactorScore(code="601318", name="中国平安", composite=71.5, scores={
             "trend": 60, "momentum": 55, "volume_price": 62,
-            "capital_flow": 75, "sentiment": 68, "quality": 82,
-            "risk": 85, "liquidity": 92,
+            "capital_flow": 75, "northbound": 70, "sentiment": 68,
+            "quality": 80, "risk": 85, "liquidity": 92, "shareholder_conc": 72,
         }),
         FactorScore(code="000333", name="美的集团", composite=68.4, scores={
             "trend": 75, "momentum": 65, "volume_price": 70,
-            "capital_flow": 65, "sentiment": 62, "quality": 78,
-            "risk": 82, "liquidity": 75,
+            "capital_flow": 65, "northbound": 80, "sentiment": 62,
+            "quality": 76, "risk": 82, "liquidity": 75, "shareholder_conc": 78,
         }),
     ]
 
@@ -114,7 +114,7 @@ def _make_daily_data() -> dict[str, list]:
     from .data.fetchers.akshare_fetcher import StockDaily
 
     data: dict[str, list] = {}
-    for code, name, price, pct, vol_ratio, turnover, amount, pe, mv in _SAMPLE_STOCKS:
+    for code, name, price, pct, _vr, turnover, amount, _pe, _mv in _SAMPLE_STOCKS:
         days = []
         base = price * 0.88  # 20天前大约 -12%
         for i in range(20):
@@ -145,7 +145,7 @@ def _make_daily_data() -> dict[str, list]:
 
 # ── 资金流向 ────────────────────────────────────
 
-def _make_fund_flows() -> dict[str, list]:
+def _make_fund_flows() -> dict[str, list[FundFlow]]:
     """为每只样本股生成 5 天资金流向数据"""
     from .data.fetchers.akshare_fetcher import FundFlow
 

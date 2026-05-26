@@ -94,6 +94,33 @@ class ScreeningPipeline:
         daily_data = self._data.batch_daily_data(codes, days=30, max_workers=6)
         fund_flows = self._data.batch_fund_flows(codes, days=5, max_workers=6)
 
+        # ── 4b. 拉取增强数据源 (北向/财务/股东) ──
+        northbound_stocks: dict[str, list[dict]] = {}
+        financials: dict[str, list] = {}
+        shareholders: dict[str, list] = {}
+        for code in codes:
+            try:
+                nb = self._data.get_northbound_stock(code, days=10)
+                if nb:
+                    northbound_stocks[code] = nb
+            except Exception:
+                pass
+            try:
+                fin = self._data.get_financial_indicators(code)
+                if fin:
+                    financials[code] = fin
+            except Exception:
+                pass
+            try:
+                sh = self._data.get_shareholder_count(code)
+                if sh:
+                    shareholders[code] = sh
+            except Exception:
+                pass
+        if northbound_stocks:
+            logger.info("4b/5 增强数据: 北向 %d只, 财务 %d只, 股东 %d只",
+                        len(northbound_stocks), len(financials), len(shareholders))
+
         # ── 5. 波动率过滤 ───────────────────────
         exclude_vol = filter_volatility(daily_data)
         if exclude_vol:
@@ -103,7 +130,12 @@ class ScreeningPipeline:
 
         # ── 6. 多因子打分 ───────────────────────
         snap_map = {s.code: s for s in liquid}
-        scored = self._scorer.score_all(codes, snap_map, daily_data, fund_flows)
+        scored = self._scorer.score_all(
+            codes, snap_map, daily_data, fund_flows,
+            northbound_stocks=northbound_stocks,
+            financials=financials,
+            shareholders=shareholders,
+        )
         top = self._scorer.top_n(scored, n=top_n)
 
         elapsed = time.monotonic() - t0
@@ -134,7 +166,8 @@ def _describe_scores(fs: FactorScore) -> str:
     parts = []
     for k, v in fs.scores.items():
         short = {"trend": "趋势", "momentum": "动量", "volume_price": "量价",
-                 "capital_flow": "资金", "sentiment": "情绪", "quality": "质量",
-                 "risk": "风险", "liquidity": "流动性"}.get(k, k)
+                 "capital_flow": "资金", "northbound": "北向", "sentiment": "情绪",
+                 "quality": "质量", "risk": "风险", "liquidity": "流动性",
+                 "shareholder_conc": "筹码"}.get(k, k)
         parts.append(f"{short}:{v:.0f}")
     return " ".join(parts)

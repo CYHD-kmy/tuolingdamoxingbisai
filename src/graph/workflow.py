@@ -200,9 +200,23 @@ def run_risk(state: PipelineState) -> dict[str, Any]:
     risk_mgr = RiskManager(total_capital=state.total_capital)
     # 传入当前已买入股票作为 current_positions，使行业集中度检查生效
     current_positions = _build_current_positions(state)
+
+    # 获取限售解禁数据
+    unlock_map: dict[str, float] = {}
+    try:
+        unlocks = data.get_unlock_shares(days_ahead=30)
+        for u in unlocks:
+            if u.unlock_ratio > 0.5:
+                unlock_map[u.code] = u.unlock_ratio
+        if unlock_map:
+            logger.info("限售解禁: %d 只股票有近期解禁风险", len(unlock_map))
+    except Exception:
+        logger.debug("限售解禁数据获取失败，跳过")
+
     limits = risk_mgr.compute_limits(
         verdicts, state.daily_data, current_positions,
         industry_map=industry_map if industry_map else None,
+        unlock_shares=unlock_map if unlock_map else None,
     )
 
     elapsed = dict(state.elapsed)

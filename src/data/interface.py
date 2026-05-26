@@ -20,6 +20,8 @@ from typing import Optional
 from .cache import DataCache
 from .fetchers.akshare_fetcher import (
     AKShareFetcher, StockDaily, RealtimeQuote, FundFlow, MarketSnapshot,
+    NorthboundFlow, MarginData, FinancialIndicator, ETFSpot,
+    UnlockShares, ShareholderCount, InstitutionalVisit, MarketActivity,
 )
 from .fetchers.tushare_fetcher import TushareFetcher
 from .fetchers.baostock_fetcher import BaoStockFetcher
@@ -228,6 +230,226 @@ class UnifiedDataInterface:
                 if result:
                     level = self._QUALITY_LIVE if fetcher.name == primary else self._QUALITY_FALLBACK
                     self._set_quality(code, "announcements", level)
+                    return result
+            except Exception:
+                continue
+        return []
+
+    # ── ETF 数据 ─────────────────────────────
+
+    def get_etf_spot(self) -> list[ETFSpot]:
+        """获取场内 ETF 实时行情"""
+        for fetcher in self._fetchers:
+            try:
+                result = fetcher.get_etf_spot()
+                if result:
+                    return result
+            except Exception:
+                continue
+        return []
+
+    def get_etf_daily(self, code: str, days: int = 60) -> list[StockDaily]:
+        """获取 ETF 日线数据"""
+        for fetcher in self._fetchers:
+            try:
+                result = fetcher.get_etf_daily(code, days)
+                if result:
+                    return result
+            except Exception:
+                continue
+        return []
+
+    # ── 北向资金 ─────────────────────────────
+
+    def get_northbound_flow(self, days: int = 5) -> list[NorthboundFlow]:
+        """获取北向资金净流向 (全市场)"""
+        primary = self._fetchers[0].name if self._fetchers else ""
+        for fetcher in self._fetchers:
+            try:
+                result = fetcher.get_northbound_flow(days)
+                if result:
+                    level = self._QUALITY_LIVE if fetcher.name == primary else self._QUALITY_FALLBACK
+                    self._set_quality("__market__", "northbound", level)
+                    return result
+            except Exception:
+                continue
+        return []
+
+    def get_northbound_stock(self, code: str, days: int = 10) -> list[dict]:
+        """获取个股沪深股通持仓变化"""
+        primary = self._fetchers[0].name if self._fetchers else ""
+        for fetcher in self._fetchers:
+            try:
+                result = fetcher.get_northbound_stock(code, days)
+                if result:
+                    level = self._QUALITY_LIVE if fetcher.name == primary else self._QUALITY_FALLBACK
+                    self._set_quality(code, "northbound_stock", level)
+                    return result
+            except Exception:
+                continue
+        return []
+
+    # ── 融资融券 ─────────────────────────────
+
+    def get_margin_summary(self) -> dict:
+        """获取全市场融资融券概况"""
+        for fetcher in self._fetchers:
+            try:
+                result = fetcher.get_margin_summary()
+                if result:
+                    return result
+            except Exception:
+                continue
+        return {}
+
+    def get_margin_detail(self, code: str, days: int = 10) -> list[MarginData]:
+        """获取个股融资融券明细"""
+        primary = self._fetchers[0].name if self._fetchers else ""
+        for fetcher in self._fetchers:
+            try:
+                result = fetcher.get_margin_detail(code, days)
+                if result:
+                    level = self._QUALITY_LIVE if fetcher.name == primary else self._QUALITY_FALLBACK
+                    self._set_quality(code, "margin", level)
+                    return result
+            except Exception:
+                continue
+        return []
+
+    # ── 深度财务指标 ─────────────────────────
+
+    def get_financial_indicators(self, code: str) -> list[FinancialIndicator]:
+        """获取深度财务指标 (多报告期趋势)"""
+        primary = self._fetchers[0].name if self._fetchers else ""
+        for fetcher in self._fetchers:
+            try:
+                result = fetcher.get_financial_indicators(code)
+                if result:
+                    level = self._QUALITY_LIVE if fetcher.name == primary else self._QUALITY_FALLBACK
+                    self._set_quality(code, "financials", level)
+                    return result
+            except Exception:
+                continue
+        return []
+
+    # ── 财联社电报 ───────────────────────────
+
+    def get_telegraph(self, limit: int = 30) -> list[dict]:
+        """获取财联社电报 (实时快讯)"""
+        for fetcher in self._fetchers:
+            try:
+                result = fetcher.get_telegraph(limit)
+                if result:
+                    return result
+            except Exception:
+                continue
+        return []
+
+    # ── 分析师研报 ───────────────────────────
+
+    def get_research_reports(self, code: str, days: int = 30) -> list[dict]:
+        """获取个股分析师研报"""
+        for fetcher in self._fetchers:
+            try:
+                result = fetcher.get_research_reports(code, days)
+                if result:
+                    return result
+            except Exception:
+                continue
+        return []
+
+    # ── 行业成分股 ───────────────────────────
+
+    def get_industry_stocks(self, industry: str) -> list[str]:
+        """获取指定行业的所有成分股代码"""
+        for fetcher in self._fetchers:
+            try:
+                result = fetcher.get_industry_stocks(industry)
+                if result:
+                    return result
+            except Exception:
+                continue
+        return []
+
+    # ── 限售解禁 ─────────────────────────────
+
+    def get_unlock_shares(self, days_ahead: int = 30) -> list[UnlockShares]:
+        """获取近期限售股解禁列表"""
+        primary = self._fetchers[0].name if self._fetchers else ""
+        for fetcher in self._fetchers:
+            try:
+                result = fetcher.get_unlock_shares(days_ahead)
+                if result:
+                    level = self._QUALITY_LIVE if fetcher.name == primary else self._QUALITY_FALLBACK
+                    self._set_quality("__market__", "unlock_shares", level)
+                    return result
+            except Exception:
+                continue
+        return []
+
+    # ── 股东人数 (筹码集中度) ────────────────
+
+    def get_shareholder_count(self, code: str) -> list[ShareholderCount]:
+        """获取股东人数变化趋势"""
+        primary = self._fetchers[0].name if self._fetchers else ""
+        for fetcher in self._fetchers:
+            try:
+                result = fetcher.get_shareholder_count(code)
+                if result:
+                    level = self._QUALITY_LIVE if fetcher.name == primary else self._QUALITY_FALLBACK
+                    self._set_quality(code, "shareholder", level)
+                    return result
+            except Exception:
+                continue
+        return []
+
+    # ── 机构调研 ──────────────────────────────
+
+    def get_institutional_visits(self, days: int = 30) -> list[InstitutionalVisit]:
+        """获取近期机构调研记录"""
+        for fetcher in self._fetchers:
+            try:
+                result = fetcher.get_institutional_visits(days)
+                if result:
+                    return result
+            except Exception:
+                continue
+        return []
+
+    # ── 市场异动 ──────────────────────────────
+
+    def get_market_activity(self) -> list[MarketActivity]:
+        """获取盘口异动"""
+        for fetcher in self._fetchers:
+            try:
+                result = fetcher.get_market_activity()
+                if result:
+                    return result
+            except Exception:
+                continue
+        return []
+
+    # ── 大宗交易 ──────────────────────────────
+
+    def get_block_trades(self, days: int = 10) -> list[dict]:
+        """获取近期大宗交易明细"""
+        for fetcher in self._fetchers:
+            try:
+                result = fetcher.get_block_trades(days)
+                if result:
+                    return result
+            except Exception:
+                continue
+        return []
+
+    # ── 龙虎榜深化 ────────────────────────────
+
+    def get_dragon_tiger_stats(self, days: int = 10) -> list[dict]:
+        """龙虎榜个股上榜统计"""
+        for fetcher in self._fetchers:
+            try:
+                result = fetcher.get_dragon_tiger_stats(days)
+                if result:
                     return result
             except Exception:
                 continue

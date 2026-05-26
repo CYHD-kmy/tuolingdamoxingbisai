@@ -138,3 +138,22 @@ class TushareFetcher:
     def get_announcements(self, code: str, days: int = 7) -> list[dict]:
         """Tushare 不支持公告查询"""
         return []
+
+    # ── 以下方法 Tushare 暂不支持，返回空 ──────
+
+    def get_etf_spot(self) -> list:          return []
+    def get_etf_daily(self, code: str, days: int = 60) -> list:  return []
+    def get_northbound_flow(self, days: int = 5) -> list:       return []
+    def get_northbound_stock(self, code: str, days: int = 10) -> list[dict]:  return []
+    def get_margin_summary(self) -> dict:                        return {}
+    def get_margin_detail(self, code: str, days: int = 10) -> list:  return []
+    def get_financial_indicators(self, code: str) -> list:       return []
+    def get_telegraph(self, limit: int = 30) -> list[dict]:      return []
+    def get_research_reports(self, code: str, days: int = 30) -> list[dict]:  return []
+    def get_industry_stocks(self, industry: str) -> list[str]:    return []
+    def get_unlock_shares(self, days_ahead: int = 30) -> list:   return []
+    def get_shareholder_count(self, code: str) -> list:           return []
+    def get_institutional_visits(self, days: int = 30) -> list:   return []
+    def get_market_activity(self) -> list:                        return []
+    def get_block_trades(self, days: int = 10) -> list[dict]:     return []
+    def get_dragon_tiger_stats(self, days: int = 10) -> list[dict]:  return []

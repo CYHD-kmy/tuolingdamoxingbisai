@@ -102,6 +102,95 @@ class MarketSnapshot:
     total_mv: float = 0.0    # 总市值 (亿元)
 
 
+@dataclass
+class NorthboundFlow:
+    """北向资金流向 (单位: 万元 / 亿)"""
+    date: str
+    net_inflow: float          # 当日净流入 (万元)
+    balance: float = 0.0       # 累计余额 (亿元)
+    sh_inflow: float = 0.0     # 沪股通净流入
+    sz_inflow: float = 0.0     # 深股通净流入
+
+
+@dataclass
+class MarginData:
+    """融资融券数据 (单位: 亿元)"""
+    date: str
+    margin_balance: float      # 融资余额
+    short_balance: float = 0.0 # 融券余额
+    margin_buy: float = 0.0    # 融资买入额
+    short_sell: float = 0.0    # 融券卖出量
+
+
+@dataclass
+class FinancialIndicator:
+    """深度财务指标 (多季度)"""
+    date: str                  # 报告期
+    roe: float = 0.0           # ROE (%)
+    roa: float = 0.0           # 总资产收益率 (%)
+    gross_margin: float = 0.0  # 毛利率 (%)
+    net_margin: float = 0.0    # 净利率 (%)
+    revenue_yoy: float = 0.0   # 营收同比增速 (%)
+    profit_yoy: float = 0.0    # 净利润同比增速 (%)
+    debt_ratio: float = 0.0    # 资产负债率 (%)
+    eps: float = 0.0           # 每股收益
+    current_ratio: float = 0.0 # 流动比率
+    quick_ratio: float = 0.0   # 速动比率
+    inventory_turnover: float = 0.0  # 存货周转率
+    cf_operating: float = 0.0  # 经营活动现金流 (亿)
+
+
+@dataclass
+class ETFSpot:
+    """ETF 实时行情"""
+    code: str
+    name: str
+    price: float
+    pct_chg: float
+    volume: float
+    amount: float
+    turnover: float = 0.0
+    fund_size: float = 0.0     # 基金规模 (亿)
+
+
+@dataclass
+class UnlockShares:
+    """限售股解禁信息"""
+    code: str
+    name: str
+    unlock_date: str
+    unlock_shares: float       # 解禁股数 (万股)
+    unlock_value: float        # 解禁市值 (万元)
+    unlock_ratio: float = 0.0  # 解禁占总股本比例 (%)
+
+
+@dataclass
+class ShareholderCount:
+    """股东人数变化"""
+    date: str
+    holder_count: int          # 股东总人数
+    change_pct: float = 0.0    # 环比变化 (%)
+
+
+@dataclass
+class InstitutionalVisit:
+    """机构调研记录"""
+    date: str
+    institution: str
+    visitors: int = 0
+    summary: str = ""
+
+
+@dataclass
+class MarketActivity:
+    """市场异动 (盘口异动)"""
+    time: str
+    code: str
+    name: str
+    activity_type: str         # 异动类型: 大单买入/大单卖出/涨跌速异常等
+    description: str
+
+
 # ── Fetcher ────────────────────────────────────
 
 class AKShareFetcher:
@@ -505,7 +594,8 @@ class AKShareFetcher:
 
         if not snapshots:
             raise RuntimeError("curl 获取全市场快照为空")
-        logger.info("curl: 获取 %d 只股票快照 (%d 页)", len(snapshots), page)
+        pages_fetched = page + 1 if page < 30 else page
+        logger.info("curl: 获取 %d 只股票快照 (%d 页)", len(snapshots), pages_fetched)
         return snapshots
 
     def _fetch_news(self, keyword: str, days: int) -> list[dict]:
@@ -576,6 +666,445 @@ class AKShareFetcher:
                     "url": str(row.get("url", "")),
                 })
             return results
+        except Exception:
+            return []
+
+    # ── ETF 数据 ─────────────────────────────
+
+    def get_etf_spot(self) -> list[ETFSpot]:
+        """获取场内 ETF 实时行情"""
+        try:
+            return self._retry(self._fetch_etf_spot)
+        except Exception:
+            logger.exception("akshare: 获取ETF行情失败")
+            return []
+
+    def _fetch_etf_spot(self) -> list[ETFSpot]:
+        import akshare as ak
+        df = ak.fund_etf_spot_em()
+        results = []
+        for _, r in df.iterrows():
+            try:
+                results.append(ETFSpot(
+                    code=str(r.get("代码", "")),
+                    name=str(r.get("名称", "")),
+                    price=float(r.get("最新价", 0) or 0),
+                    pct_chg=float(r.get("涨跌幅", 0) or 0),
+                    volume=float(r.get("成交量", 0) or 0),
+                    amount=float(r.get("成交额", 0) or 0),
+                    turnover=float(r.get("换手率", 0) or 0),
+                ))
+            except (ValueError, KeyError):
+                continue
+        return results
+
+    def get_etf_daily(self, code: str, days: int = 60) -> list[StockDaily]:
+        """获取 ETF 日线数据 (复用 StockDaily 结构)"""
+        try:
+            return self._retry(self._fetch_etf_daily, code, days)
+        except Exception:
+            logger.exception("akshare: 获取ETF日线失败 %s", code)
+            return []
+
+    def _fetch_etf_daily(self, code: str, days: int) -> list[StockDaily]:
+        import akshare as ak
+        end = datetime.now().strftime("%Y%m%d")
+        start = (datetime.now() - timedelta(days=days * 2)).strftime("%Y%m%d")
+        df = ak.fund_etf_hist_em(symbol=code, period="daily", start_date=start, end_date=end, adjust="qfq")
+        return self._to_stock_daily_list(df.tail(days))
+
+    # ── 北向资金 ─────────────────────────────
+
+    def get_northbound_flow(self, days: int = 5) -> list[NorthboundFlow]:
+        """获取北向资金净流向 (全市场)"""
+        try:
+            return self._retry(self._fetch_northbound_flow, days)
+        except Exception:
+            logger.exception("akshare: 获取北向资金流向失败")
+            return []
+
+    def _fetch_northbound_flow(self, days: int) -> list[NorthboundFlow]:
+        import akshare as ak
+        df = ak.stock_hsgt_north_net_flow_in_em()
+        results = []
+        for _, r in df.tail(days).iterrows():
+            try:
+                results.append(NorthboundFlow(
+                    date=str(r.get("date", r.get("日期", "")))[:10],
+                    net_inflow=float(r.get("value", r.get("净流入", 0)) or 0),
+                    sh_inflow=float(r.get("sh", r.get("沪股通", 0)) or 0),
+                    sz_inflow=float(r.get("sz", r.get("深股通", 0)) or 0),
+                ))
+            except (ValueError, KeyError):
+                continue
+        return results
+
+    def get_northbound_stock(self, code: str, days: int = 10) -> list[dict]:
+        """获取个股沪深股通持仓变化"""
+        try:
+            return self._retry(self._fetch_northbound_stock, code, days)
+        except Exception:
+            logger.exception("akshare: 获取个股北向数据失败 %s", code)
+            return []
+
+    def _fetch_northbound_stock(self, code: str, days: int) -> list[dict]:
+        import akshare as ak
+        em_code = self._eastmoney_code(code)
+        try:
+            df = ak.stock_hsgt_individual_em(symbol=em_code)
+            return [
+                {"date": str(r.get("日期", ""))[:10],
+                 "hold_shares": float(r.get("持股数量", 0) or 0),
+                 "hold_value": float(r.get("持股市值", 0) or 0),
+                 "hold_pct": float(r.get("持股占比", 0) or 0)}
+                for _, r in df.tail(days).iterrows()
+            ]
+        except Exception:
+            return []
+
+    # ── 融资融券 ─────────────────────────────
+
+    def get_margin_summary(self) -> dict:
+        """获取全市场融资融券概况"""
+        try:
+            return self._retry(self._fetch_margin_summary)
+        except Exception:
+            logger.exception("akshare: 获取融资融券概况失败")
+            return {}
+
+    def _fetch_margin_summary(self) -> dict:
+        import akshare as ak
+        try:
+            df_sh = ak.stock_margin_sh()
+            sh_row = df_sh.iloc[-1] if not df_sh.empty else None
+        except Exception:
+            sh_row = None
+        try:
+            df_sz = ak.stock_margin_sz()
+            sz_row = df_sz.iloc[-1] if not df_sz.empty else None
+        except Exception:
+            sz_row = None
+
+        result = {}
+        if sh_row is not None:
+            result["sh_margin_balance"] = float(sh_row.get("融资余额", 0) or 0)
+            result["sh_margin_buy"] = float(sh_row.get("融资买入额", 0) or 0)
+        if sz_row is not None:
+            result["sz_margin_balance"] = float(sz_row.get("融资余额", 0) or 0)
+            result["sz_margin_buy"] = float(sz_row.get("融资买入额", 0) or 0)
+        return result
+
+    def get_margin_detail(self, code: str, days: int = 10) -> list[MarginData]:
+        """获取个股融资融券明细"""
+        try:
+            return self._retry(self._fetch_margin_detail, code, days)
+        except Exception:
+            logger.exception("akshare: 获取个股融资融券失败 %s", code)
+            return []
+
+    def _fetch_margin_detail(self, code: str, days: int) -> list[MarginData]:
+        import akshare as ak
+        market = "sh" if code.startswith(("6", "9")) else "sz"
+        try:
+            fn = ak.stock_margin_detail_sh if market == "sh" else ak.stock_margin_detail_sz
+            df = fn(date="")
+            if df is None or df.empty:
+                return []
+            mask = df["股票代码"].astype(str).str.replace(r"[^0-9]", "", regex=True) == self._normalize_code(code)
+            df = df[mask].tail(days)
+            return [
+                MarginData(
+                    date=str(r.get("日期", ""))[:10],
+                    margin_balance=float(r.get("融资余额", 0) or 0),
+                    margin_buy=float(r.get("融资买入额", 0) or 0),
+                    short_balance=float(r.get("融券余量", 0) or 0),
+                )
+                for _, r in df.iterrows()
+            ]
+        except Exception:
+            return []
+
+    # ── 深度财务指标 ─────────────────────────
+
+    def get_financial_indicators(self, code: str) -> list[FinancialIndicator]:
+        """获取深度财务指标 (多报告期趋势)"""
+        try:
+            return self._retry(self._fetch_financial_indicators, code)
+        except Exception:
+            logger.exception("akshare: 获取财务指标失败 %s", code)
+            return []
+
+    def _fetch_financial_indicators(self, code: str) -> list[FinancialIndicator]:
+        import akshare as ak
+        em_code = self._eastmoney_code(code)
+        df = ak.stock_financial_analysis_indicator(symbol=em_code)
+        if df is None or df.empty:
+            return []
+        results = []
+        for _, r in df.tail(8).iterrows():
+            try:
+                results.append(FinancialIndicator(
+                    date=str(r.get("日期", r.get("报告期", "")))[:10],
+                    roe=float(r.get("净资产收益率", 0) or 0),
+                    roa=float(r.get("总资产净利润率", 0) or 0),
+                    gross_margin=float(r.get("销售毛利率", 0) or 0),
+                    net_margin=float(r.get("销售净利率", 0) or 0),
+                    revenue_yoy=float(r.get("营业收入同比增长率", 0) or 0),
+                    profit_yoy=float(r.get("净利润同比增长率", 0) or 0),
+                    debt_ratio=float(r.get("资产负债率", 0) or 0),
+                    eps=float(r.get("每股收益", 0) or 0),
+                    current_ratio=float(r.get("流动比率", 0) or 0),
+                    quick_ratio=float(r.get("速动比率", 0) or 0),
+                    inventory_turnover=float(r.get("存货周转率", 0) or 0),
+                    cf_operating=float(r.get("经营活动现金流量净额", 0) or 0) / 1e8,
+                ))
+            except (ValueError, KeyError):
+                continue
+        return results
+
+    # ── 财联社电报 ───────────────────────────
+
+    def get_telegraph(self, limit: int = 30) -> list[dict]:
+        """获取财联社电报 (实时快讯)"""
+        try:
+            return self._retry(self._fetch_telegraph, limit)
+        except Exception:
+            logger.exception("akshare: 获取电报失败")
+            return []
+
+    def _fetch_telegraph(self, limit: int) -> list[dict]:
+        import akshare as ak
+        df = ak.stock_telegraph_cls()
+        if df is None or df.empty:
+            return []
+        return [
+            {"title": str(r.get("title", r.get("标题", ""))),
+             "content": str(r.get("content", r.get("内容", "")))[:500],
+             "time": str(r.get("ctime", r.get("时间", "")))}
+            for _, r in df.head(limit).iterrows()
+        ]
+
+    # ── 分析师研报 ───────────────────────────
+
+    def get_research_reports(self, code: str, days: int = 30) -> list[dict]:
+        """获取个股分析师研报"""
+        try:
+            return self._retry(self._fetch_research_reports, code, days)
+        except Exception:
+            logger.exception("akshare: 获取研报失败 %s", code)
+            return []
+
+    def _fetch_research_reports(self, code: str, days: int) -> list[dict]:
+        import akshare as ak
+        try:
+            df = ak.stock_research_report_em(symbol=self._eastmoney_code(code))
+            if df is None or df.empty:
+                return []
+            return [
+                {"title": str(r.get("title", r.get("研报标题", ""))),
+                 "org": str(r.get("org", r.get("研究机构", ""))),
+                 "rating": str(r.get("rating", r.get("评级", ""))),
+                 "date": str(r.get("date", r.get("日期", "")))[:10]}
+                for _, r in df.head(15).iterrows()
+            ]
+        except Exception:
+            return []
+
+    # ── 行业成分股 ───────────────────────────
+
+    def get_industry_stocks(self, industry: str) -> list[str]:
+        """获取指定行业的所有成分股代码"""
+        try:
+            return self._retry(self._fetch_industry_stocks, industry)
+        except Exception:
+            logger.exception("akshare: 获取行业成分股失败 %s", industry)
+            return []
+
+    def _fetch_industry_stocks(self, industry: str) -> list[str]:
+        import akshare as ak
+        df = ak.stock_board_industry_cons_em(symbol=industry)
+        if df is None or df.empty:
+            return []
+        codes = df["代码"].astype(str).tolist()
+        # 清理代码格式 (去除 sh/sz 前缀不一致的情况)
+        cleaned = []
+        for c in codes:
+            first_digit_pos = next((i for i, ch in enumerate(c) if ch.isdigit()), -1)
+            cleaned.append(c[first_digit_pos:] if first_digit_pos >= 0 else c)
+        return cleaned
+
+    # ── 限售解禁 ─────────────────────────────
+
+    def get_unlock_shares(self, days_ahead: int = 30) -> list[UnlockShares]:
+        """获取近期限售股解禁列表"""
+        try:
+            return self._retry(self._fetch_unlock_shares, days_ahead)
+        except Exception:
+            logger.exception("akshare: 获取解禁数据失败")
+            return []
+
+    def _fetch_unlock_shares(self, days_ahead: int) -> list[UnlockShares]:
+        import akshare as ak
+        try:
+            df = ak.stock_restricted_release_queue_em()
+            if df is None or df.empty:
+                return []
+            results = []
+            for _, r in df.head(50).iterrows():
+                try:
+                    results.append(UnlockShares(
+                        code=str(r.get("代码", "")),
+                        name=str(r.get("名称", "")),
+                        unlock_date=str(r.get("解禁日期", ""))[:10],
+                        unlock_shares=float(r.get("解禁数量", 0) or 0),
+                        unlock_value=float(r.get("解禁市值", 0) or 0),
+                        unlock_ratio=float(r.get("占总股本比例", 0) or 0),
+                    ))
+                except (ValueError, KeyError):
+                    continue
+            return results
+        except Exception:
+            return []
+
+    # ── 股东人数变化 (筹码集中度) ─────────────
+
+    def get_shareholder_count(self, code: str) -> list[ShareholderCount]:
+        """获取股东人数变化趋势 (筹码集中度)"""
+        try:
+            return self._retry(self._fetch_shareholder_count, code)
+        except Exception:
+            logger.exception("akshare: 获取股东人数失败 %s", code)
+            return []
+
+    def _fetch_shareholder_count(self, code: str) -> list[ShareholderCount]:
+        import akshare as ak
+        try:
+            df = ak.stock_zh_a_gdhs_em(symbol=self._eastmoney_code(code))
+            if df is None or df.empty:
+                return []
+            results = []
+            for _, r in df.tail(6).iterrows():
+                holder_count = float(r.get("股东人数", 0) or 0)
+                if holder_count <= 0:
+                    continue
+                results.append(ShareholderCount(
+                    date=str(r.get("日期", ""))[:10],
+                    holder_count=int(holder_count),
+                    change_pct=float(r.get("环比增减", 0) or 0),
+                ))
+            return results
+        except Exception:
+            return []
+
+    # ── 机构调研 ──────────────────────────────
+
+    def get_institutional_visits(self, days: int = 30) -> list[InstitutionalVisit]:
+        """获取近期机构调研记录"""
+        try:
+            return self._retry(self._fetch_institutional_visits, days)
+        except Exception:
+            logger.exception("akshare: 获取机构调研失败")
+            return []
+
+    def _fetch_institutional_visits(self, days: int) -> list[InstitutionalVisit]:
+        import akshare as ak
+        try:
+            df = ak.stock_institute_visit_em()
+            if df is None or df.empty:
+                return []
+            return [
+                InstitutionalVisit(
+                    date=str(r.get("日期", ""))[:10],
+                    institution=str(r.get("机构名称", r.get("调研机构", ""))),
+                    visitors=int(r.get("调研人员", 0) or 0),
+                    summary=str(r.get("调研摘要", ""))[:300],
+                )
+                for _, r in df.head(30).iterrows()
+            ]
+        except Exception:
+            return []
+
+    # ── 市场异动 ──────────────────────────────
+
+    def get_market_activity(self) -> list[MarketActivity]:
+        """获取盘口异动 (大单买入/卖出、涨跌速异常等)"""
+        try:
+            return self._retry(self._fetch_market_activity)
+        except Exception:
+            logger.exception("akshare: 获取市场异动失败")
+            return []
+
+    def _fetch_market_activity(self) -> list[MarketActivity]:
+        import akshare as ak
+        try:
+            df = ak.stock_market_activity_em()
+            if df is None or df.empty:
+                return []
+            return [
+                MarketActivity(
+                    time=str(r.get("时间", "")),
+                    code=str(r.get("代码", "")),
+                    name=str(r.get("名称", "")),
+                    activity_type=str(r.get("异动类型", r.get("异动", ""))),
+                    description=str(r.get("异动描述", r.get("描述", ""))),
+                )
+                for _, r in df.head(30).iterrows()
+            ]
+        except Exception:
+            return []
+
+    # ── 大宗交易 ──────────────────────────────
+
+    def get_block_trades(self, days: int = 10) -> list[dict]:
+        """获取近期大宗交易明细"""
+        try:
+            return self._retry(self._fetch_block_trades, days)
+        except Exception:
+            logger.exception("akshare: 获取大宗交易失败")
+            return []
+
+    def _fetch_block_trades(self, days: int) -> list[dict]:
+        import akshare as ak
+        try:
+            df = ak.stock_dzjy_mrmx()
+            if df is None or df.empty:
+                return []
+            return [
+                {"date": str(r.get("日期", ""))[:10],
+                 "code": str(r.get("代码", "")),
+                 "name": str(r.get("名称", "")),
+                 "price": float(r.get("成交价", 0) or 0),
+                 "volume": float(r.get("成交额", 0) or 0),
+                 "premium": float(r.get("溢价率", 0) or 0)}
+                for _, r in df.head(30).iterrows()
+            ]
+        except Exception:
+            return []
+
+    # ── 龙虎榜深化 ────────────────────────────
+
+    def get_dragon_tiger_stats(self, days: int = 10) -> list[dict]:
+        """龙虎榜个股上榜统计 (游资活跃度)"""
+        try:
+            return self._retry(self._fetch_dragon_tiger_stats, days)
+        except Exception:
+            logger.exception("akshare: 获取龙虎榜统计失败")
+            return []
+
+    def _fetch_dragon_tiger_stats(self, days: int) -> list[dict]:
+        import akshare as ak
+        try:
+            df = ak.stock_lhb_stock_statistic_em()
+            if df is None or df.empty:
+                return []
+            return [
+                {"code": str(r.get("代码", "")),
+                 "name": str(r.get("名称", "")),
+                 "count": int(r.get("上榜次数", 0) or 0),
+                 "buy_amount": float(r.get("买入金额", 0) or 0),
+                 "sell_amount": float(r.get("卖出金额", 0) or 0)}
+                for _, r in df.head(30).iterrows()
+            ]
         except Exception:
             return []
 

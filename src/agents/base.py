@@ -209,6 +209,10 @@ class BaseAnalyst(ABC):
             "get_fund_flow": 5,
             "get_news": 3,
             "get_announcements": 7,
+            "get_northbound_flow": 5,
+            "get_northbound_stock": 10,
+            "get_margin_detail": 10,
+            "get_research_reports": 30,
         }
         days = int(args.get("days", _DEFAULT_DAYS.get(name, 30)))
 
@@ -254,6 +258,41 @@ class BaseAnalyst(ABC):
             elif name == "get_announcements":
                 announcements = self._data.get_announcements(code, days=days)
                 return ToolResult(call_id=call_id, name=name, result=json.dumps(announcements[:5], ensure_ascii=False))
+
+            elif name == "get_northbound_flow":
+                flows = self._data.get_northbound_flow(days=days)
+                return ToolResult(call_id=call_id, name=name, result=json.dumps(
+                    [{"date": f.date, "net_inflow": f.net_inflow, "sh_inflow": f.sh_inflow, "sz_inflow": f.sz_inflow} for f in flows],
+                    ensure_ascii=False))
+
+            elif name == "get_northbound_stock":
+                data = self._data.get_northbound_stock(code, days=days)
+                return ToolResult(call_id=call_id, name=name, result=json.dumps(data, ensure_ascii=False))
+
+            elif name == "get_margin_detail":
+                margins = self._data.get_margin_detail(code, days=days)
+                return ToolResult(call_id=call_id, name=name, result=json.dumps(
+                    [{"date": m.date, "margin_balance": m.margin_balance, "margin_buy": m.margin_buy, "short_balance": m.short_balance} for m in margins],
+                    ensure_ascii=False))
+
+            elif name == "get_financials":
+                fins = self._data.get_financial_indicators(code)
+                return ToolResult(call_id=call_id, name=name, result=json.dumps(
+                    [{"date": f.date, "roe": f.roe, "roa": f.roa, "gross_margin": f.gross_margin, "net_margin": f.net_margin,
+                      "revenue_yoy": f.revenue_yoy, "profit_yoy": f.profit_yoy, "debt_ratio": f.debt_ratio,
+                      "eps": f.eps, "current_ratio": f.current_ratio, "quick_ratio": f.quick_ratio,
+                      "cf_operating": f.cf_operating} for f in fins],
+                    ensure_ascii=False))
+
+            elif name == "get_research_reports":
+                reports = self._data.get_research_reports(code, days=days)
+                return ToolResult(call_id=call_id, name=name, result=json.dumps(reports[:10], ensure_ascii=False))
+
+            elif name == "get_shareholder_count":
+                holders = self._data.get_shareholder_count(code)
+                return ToolResult(call_id=call_id, name=name, result=json.dumps(
+                    [{"date": h.date, "holder_count": h.holder_count, "change_pct": h.change_pct} for h in holders],
+                    ensure_ascii=False))
 
             else:
                 return ToolResult(call_id=call_id, name=name, result="{}", success=False, error=f"未知工具: {name}")

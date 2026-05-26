@@ -95,7 +95,7 @@ def fallback_technical_report(code: str, name: str, data: Any) -> AnalystReport:
 
 
 def fallback_fundamentals_report(code: str, name: str, data: Any) -> AnalystReport:
-    """用 PE 范围 + 市值做确定性基本面判断"""
+    """用 PE 范围 + 市值 + 财务指标做确定性基本面判断"""
     quote = data.get_realtime_quote(code) if data else None
     if quote is None:
         return AnalystReport(
@@ -133,6 +133,26 @@ def fallback_fundamentals_report(code: str, name: str, data: Any) -> AnalystRepo
         bull_score -= 5
         risks.append("小盘股，流动性风险")
 
+    # 尝试深度财务指标
+    try:
+        financials = data.get_financial_indicators(code) if data else []
+        if financials:
+            latest = financials[-1]
+            if latest.roe > 15:
+                bull_score += 10
+                points.append(f"ROE={latest.roe:.1f}% 优秀")
+            elif latest.roe < 5:
+                bull_score -= 8
+                risks.append(f"ROE={latest.roe:.1f}% 偏低")
+            if latest.revenue_yoy > 15:
+                bull_score += 5
+                points.append(f"营收增速 {latest.revenue_yoy:+.1f}%")
+            elif latest.revenue_yoy < 0:
+                bull_score -= 5
+                risks.append(f"营收负增长 {latest.revenue_yoy:+.1f}%")
+    except Exception:
+        pass
+
     signal, confidence = _score_to_signal(bull_score, 30)
     return AnalystReport(
         analyst_type="fundamentals", code=code, name=name,
@@ -144,46 +164,65 @@ def fallback_fundamentals_report(code: str, name: str, data: Any) -> AnalystRepo
 
 
 def fallback_fund_flow_report(code: str, name: str, data: Any) -> AnalystReport:
-    """用资金净流入方向做确定性判断"""
+    """用资金净流入方向 + 北向持仓做确定性判断"""
     flows = data.get_fund_flow(code, days=5) if data else []
-    if not flows:
+    points = []
+    risks = []
+    bull_score = 0
+
+    if flows:
+        total_inflow = sum(f.main_net_inflow for f in flows)
+        positive_days = sum(1 for f in flows if f.main_net_inflow > 0)
+
+        if total_inflow > 5000:
+            bull_score += 30
+            points.append(f"近5日主力净流入 {total_inflow:.0f}万")
+        elif total_inflow > 1000:
+            bull_score += 15
+            points.append(f"近5日主力小幅净流入 {total_inflow:.0f}万")
+        elif total_inflow < -5000:
+            bull_score -= 25
+            risks.append(f"近5日主力净流出 {abs(total_inflow):.0f}万")
+        elif total_inflow < -1000:
+            bull_score -= 10
+            risks.append(f"近5日主力小幅净流出 {abs(total_inflow):.0f}万")
+
+        if positive_days >= 4:
+            bull_score += 15
+            points.append(f"主力持续流入 ({positive_days}/5天)")
+        elif positive_days <= 1:
+            bull_score -= 10
+            risks.append(f"主力多数日期流出 ({5-positive_days}/5天)")
+    else:
+        points.append("无主力资金数据")
+
+    # 尝试北向资金
+    try:
+        nb_data = data.get_northbound_stock(code, days=10) if data else []
+        if nb_data:
+            hold_pcts = [d.get("hold_pct", 0) for d in nb_data if d.get("hold_pct")]
+            if len(hold_pcts) >= 3:
+                if all(hold_pcts[i] < hold_pcts[i + 1] for i in range(len(hold_pcts) - 1)):
+                    bull_score += 15
+                    points.append("北向连续增持")
+                elif hold_pcts[-1] < hold_pcts[0]:
+                    bull_score -= 10
+                    risks.append("北向减持")
+    except Exception:
+        pass
+
+    if not flows and not points:
         return AnalystReport(
             analyst_type="fund_flow", code=code, name=name,
             signal="neutral", confidence=0.30,
             reasoning="[降级] 无资金流向数据",
         )
 
-    total_inflow = sum(f.main_net_inflow for f in flows)
-    positive_days = sum(1 for f in flows if f.main_net_inflow > 0)
-    points = []
-    risks = []
-
-    bull_score = 0
-    if total_inflow > 5000:
-        bull_score += 30
-        points.append(f"近5日主力净流入 {total_inflow:.0f}万")
-    elif total_inflow > 1000:
-        bull_score += 15
-        points.append(f"近5日主力小幅净流入 {total_inflow:.0f}万")
-    elif total_inflow < -5000:
-        bull_score -= 25
-        risks.append(f"近5日主力净流出 {abs(total_inflow):.0f}万")
-    elif total_inflow < -1000:
-        bull_score -= 10
-        risks.append(f"近5日主力小幅净流出 {abs(total_inflow):.0f}万")
-
-    if positive_days >= 4:
-        bull_score += 15
-        points.append(f"主力持续流入 ({positive_days}/5天)")
-    elif positive_days <= 1:
-        bull_score -= 10
-        risks.append(f"主力多数日期流出 ({5-positive_days}/5天)")
-
     signal, confidence = _score_to_signal(bull_score, 40)
     return AnalystReport(
         analyst_type="fund_flow", code=code, name=name,
         signal=signal, confidence=confidence,
-        reasoning=f"[降级-规则引擎] 近5日主力{'流入' if total_inflow > 0 else '流出'} {abs(total_inflow):.0f}万",
+        reasoning=f"[降级-规则引擎] 资金面综合评分{bull_score:+d}",
         key_points=points[:3],
         risks=risks[:3],
     )

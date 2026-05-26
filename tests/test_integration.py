@@ -131,13 +131,14 @@ def test_demo_report_generation():
 
 
 def test_demo_all_candidates_have_scores():
-    """demo 模式下所有候选股都有完整的因子评分"""
+    """demo 模式下所有候选股都有完整的因子评分 (10因子)"""
     state = generate_demo_state()
 
     for c in state.candidates:
-        assert len(c.scores) == 8
+        assert len(c.scores) == 10
         for factor in ("trend", "momentum", "volume_price", "capital_flow",
-                       "sentiment", "quality", "risk", "liquidity"):
+                       "northbound", "sentiment", "quality", "risk",
+                       "liquidity", "shareholder_conc"):
             assert factor in c.scores
             assert 0 <= c.scores[factor] <= 100
 
