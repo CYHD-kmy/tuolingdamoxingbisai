@@ -9,7 +9,6 @@
 
 import json
 import logging
-import os
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -144,18 +143,3 @@ class DataCache:
         except Exception:
             pass
 
-
-# 注册 atexit 确保正常退出时持久化
-import atexit
-_global_cache: DataCache | None = None
-
-
-def _persist_global_cache() -> None:
-    if _global_cache is not None:
-        try:
-            _global_cache._save_to_disk()
-        except Exception:
-            pass
-
-
-atexit.register(_persist_global_cache)

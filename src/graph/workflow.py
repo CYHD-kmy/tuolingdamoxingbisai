@@ -38,7 +38,6 @@ from ..agents.researchers.engine import DebateEngine
 from ..agents.managers.research_manager import ResearchManager
 from ..agents.managers.risk_manager import RiskManager
 from ..agents.managers.portfolio_manager import PortfolioManager
-from ..utils.validators import get_latest_price
 
 logger = logging.getLogger(__name__)
 
@@ -215,8 +214,8 @@ def run_risk(state: PipelineState) -> dict[str, Any]:
 
     limits = risk_mgr.compute_limits(
         verdicts, state.daily_data, current_positions,
-        industry_map=industry_map if industry_map else None,
-        unlock_shares=unlock_map if unlock_map else None,
+        industry_map=industry_map or None,
+        unlock_shares=unlock_map or None,
     )
 
     elapsed = dict(state.elapsed)

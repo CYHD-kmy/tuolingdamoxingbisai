@@ -191,9 +191,7 @@ class ScreeningScorer:
             factors.add("shareholder_conc")
         else:
             logger.info("股东人数数据不可用，跳过 shareholder_conc 因子")
-        if financials and any(v for v in financials.values()):
-            factors.add("financials_available")  # quality 因子内部会利用 financials 增强
-        else:
+        if not (financials and any(v for v in financials.values())):
             logger.info("深度财务数据不可用，quality 因子使用基础 PE 评分")
         return factors
 

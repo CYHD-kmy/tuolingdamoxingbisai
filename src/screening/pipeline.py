@@ -17,7 +17,6 @@ import time
 from dataclasses import dataclass, field
 
 from ..data.interface import UnifiedDataInterface
-from ..data.fetchers.akshare_fetcher import MarketSnapshot
 from ..utils.config import get_config
 from .filters import (
     filter_tradable,
