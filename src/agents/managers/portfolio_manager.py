@@ -13,6 +13,7 @@ import logging
 from ..models import FinalDecision, PortfolioResult, ResearchVerdict, PositionLimit
 from ...llm.client import LLMClient
 from ...llm.schema import Message
+from ...utils.validators import validate_and_clip, get_latest_price, extract_json
 
 logger = logging.getLogger(__name__)
 
@@ -163,26 +164,13 @@ class PortfolioManager:
 
     @staticmethod
     def _get_price(code: str, daily_data: dict[str, list]) -> float:
-        records = daily_data.get(code, [])
-        if not records:
-            return 0.0
-        return records[-1].close
+        return get_latest_price(code, daily_data)
 
     @staticmethod
     def _parse_decisions(raw: str) -> list[FinalDecision]:
         """解析 LLM 输出的 JSON 决策"""
         try:
-            if "```json" in raw:
-                start = raw.index("```json") + 7
-                end = raw.index("```", start)
-                raw = raw[start:end]
-            elif "```" in raw:
-                start = raw.index("```") + 3
-                end = raw.index("```", start)
-                raw = raw[start:end]
-            if "[" in raw and "]" in raw:
-                raw = raw[raw.index("["):raw.rindex("]") + 1]
-            data = json.loads(raw)
+            data = json.loads(extract_json(raw))
             if not isinstance(data, list):
                 return []
             return [
@@ -205,42 +193,10 @@ class PortfolioManager:
         cash_available: float,
         total_capital: float,
     ) -> list[FinalDecision]:
-        """校验并裁剪决策"""
-        valid = []
-        total_cost = 0.0
-        min_cash = total_capital * 0.10
-
-        for d in decisions:
-            price = PortfolioManager._get_price(d.symbol, daily_data)
-            if price <= 0:
-                continue
-
-            # volume 向下取整到 100 的倍数
-            d.volume = d.volume // 100 * 100
-            if d.volume <= 0:
-                continue
-
-            # 不超过风控上限
-            limit = limits.get(d.symbol)
-            if limit and d.volume > limit.max_shares:
-                logger.info("PortfolioManager: %s 裁剪 %d→%d (风控上限)", d.symbol, d.volume, limit.max_shares)
-                d.volume = limit.max_shares
-
-            cost = d.volume * price
-            if total_cost + cost > cash_available - min_cash:
-                # 超预算，尝试缩量
-                remaining = cash_available - min_cash - total_cost
-                new_volume = int(remaining / price / 100) * 100
-                if new_volume >= 100:
-                    logger.info("PortfolioManager: %s 裁剪 %d→%d (超预算)", d.symbol, d.volume, new_volume)
-                    d.volume = new_volume
-                    total_cost += d.volume * price
-                    valid.append(d)
-                else:
-                    logger.info("PortfolioManager: %s 跳过 (预算不足)", d.symbol)
-                break
-            else:
-                total_cost += cost
-                valid.append(d)
-
-        return valid
+        """校验并裁剪决策，委托到共享校验模块"""
+        return validate_and_clip(
+            decisions, limits, daily_data,
+            cash_available=cash_available,
+            total_capital=total_capital,
+            min_cash_reserve=0.10,
+        )

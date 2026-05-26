@@ -77,7 +77,7 @@ class NewsSentimentAnalyst(BaseAnalyst):
         name = self._data.get_stock_name(code)
         info = self._data.get_stock_info(code)
         announcements = self._data.get_announcements(code, days=14)
-        news = self._data.get_news(name if name != code else "", days=3)
+        news = self._data.get_news(code, days=3)
         quote = self._data.get_realtime_quote(code)
 
         lines = []

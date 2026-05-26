@@ -31,6 +31,7 @@ from ..agents.researchers.engine import DebateEngine
 from ..agents.managers.research_manager import ResearchManager
 from ..agents.managers.risk_manager import RiskManager
 from ..agents.managers.portfolio_manager import PortfolioManager
+from ..utils.validators import get_latest_price
 
 logger = logging.getLogger(__name__)
 
@@ -127,7 +128,8 @@ def run_analysis(state: PipelineState) -> dict[str, Any]:
 
         # 3. 研究主管研判
         try:
-            price = state.daily_data.get(code, [None])[-1].close if state.daily_data.get(code) else 0
+            records = state.daily_data.get(code, [])
+            price = records[-1].close if records else 0
             verdict = research_mgr.decide(code, name, reports, debate, price)
         except Exception as e:
             logger.warning("%s 研究主管研判失败: %s", code, e)
@@ -174,8 +176,23 @@ def run_risk(state: PipelineState) -> dict[str, Any]:
         state.stage = "risk_skipped"
         return {"stage": state.stage}
 
+    # 获取行业信息，构建行业映射
+    data = UnifiedDataInterface()
+    codes = [v.code for v in verdicts]
+    stock_infos = data.batch_stock_info(codes)
+    industry_map: dict[str, str] = {}
+    for code, info in stock_infos.items():
+        industry = info.get("industry", "")
+        if industry:
+            industry_map[code] = industry
+    if industry_map:
+        logger.info("行业映射: %d 只", len(industry_map))
+
     risk_mgr = RiskManager(total_capital=state.total_capital)
-    limits = risk_mgr.compute_limits(verdicts, state.daily_data, {})
+    limits = risk_mgr.compute_limits(
+        verdicts, state.daily_data, {},
+        industry_map=industry_map if industry_map else None,
+    )
 
     state.position_limits = limits
     state.stage = "risk_done"
@@ -204,7 +221,7 @@ def run_portfolio(state: PipelineState) -> dict[str, Any]:
     deep_llm = get_deep_llm()
     portfolio_mgr = PortfolioManager(deep_llm)
 
-    cash = state.total_capital  # 简化: MVP 阶段默认全仓可用
+    cash = state.total_capital
 
     result = portfolio_mgr.construct(
         verdicts, state.position_limits, state.daily_data,

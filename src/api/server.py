@@ -295,4 +295,6 @@ async def api_trace(date: str | None = None):
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("src.api.server:app", host="0.0.0.0", port=8000, reload=True)
+    host = os.getenv("ZHITOU_HOST", "0.0.0.0")
+    port = int(os.getenv("ZHITOU_PORT", "8000"))
+    uvicorn.run("src.api.server:app", host=host, port=port, reload=True)

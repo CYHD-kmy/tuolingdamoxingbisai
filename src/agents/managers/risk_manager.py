@@ -13,16 +13,11 @@ import logging
 from typing import Any
 
 from ..models import PositionLimit, ResearchVerdict
+from ...utils.config import get_config
 
 logger = logging.getLogger(__name__)
 
-# ── 风控参数 ──────────────────────────────────
-
-MAX_SINGLE_POSITION = 0.20       # 基准: 单票 ≤ 20%
-MAX_INDUSTRY_EXPOSURE = 0.40     # 同行业 ≤ 40%
-MAX_DRAWDOWN_DAILY = 0.05        # 日内熔断 5%
-MIN_CASH_RESERVE = 0.10           # 保留 ≥ 10% 现金
-LOT_SIZE = 100                    # A股最小交易单位
+LOT_SIZE = 100  # A股最小交易单位
 
 
 class RiskManager:
@@ -36,6 +31,7 @@ class RiskManager:
 
     def __init__(self, total_capital: float = 500_000.0) -> None:
         self._capital = total_capital
+        self._cfg = get_config()
 
     # ── 主入口 ────────────────────────────────
 
@@ -60,7 +56,7 @@ class RiskManager:
 
         for v in verdicts:
             # 1. 基础仓位比例
-            base_pct = MAX_SINGLE_POSITION
+            base_pct = self._cfg.max_single_position
 
             # 2. 波动率调整
             volatility = self._calc_volatility(v.code, daily_data)
@@ -89,7 +85,7 @@ class RiskManager:
 
             # 综合计算
             final_pct = base_pct * vol_mult * conf_mult * risk_mult
-            final_pct = min(final_pct, MAX_SINGLE_POSITION)  # 硬上限 20%
+            final_pct = min(final_pct, self._cfg.max_single_position)  # 硬上限 20%
 
             # 行业集中度检查
             risk_flags = []
@@ -101,7 +97,7 @@ class RiskManager:
                     for c, s in current_positions.items()
                     if c in industry_codes
                 )
-                if industry_current / self._capital > MAX_INDUSTRY_EXPOSURE:
+                if industry_current / self._capital > self._cfg.max_industry_exposure:
                     final_pct *= 0.5
                     risk_flags.append(f"行业 {industry} 集中度超标")
 
@@ -134,7 +130,7 @@ class RiskManager:
     def check_drawdown(self, current_value: float) -> bool:
         """检查是否触发日内熔断"""
         drawdown = 1 - current_value / self._capital
-        if drawdown >= MAX_DRAWDOWN_DAILY:
+        if drawdown >= self._cfg.max_drawdown_daily:
             logger.warning("触发日内熔断! 回撤: %.2f%%", drawdown * 100)
             return True
         return False

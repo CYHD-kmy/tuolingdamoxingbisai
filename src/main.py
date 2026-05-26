@@ -28,7 +28,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from src.utils.config import get_config
 from src.graph.workflow import run_pipeline
-from src.output.json_formatter import format_decisions
+from src.output.json_formatter import format_decisions, validate_decisions
 from src.output.trace_logger import save_trace
 from src.output.report_generator import generate_daily_report
 
@@ -103,7 +103,16 @@ def main(demo: bool = False) -> None:
     print("=" * 50)
 
     if state.final_result and state.final_result.decisions:
-        decisions_json = format_decisions(state.final_result.decisions)
+        validated = validate_decisions(
+            state.final_result.decisions,
+            state.position_limits,
+            state.daily_data,
+            cash_available=config.initial_capital,
+            min_cash_reserve=config.min_cash_reserve,
+            total_capital=config.initial_capital,
+        )
+        state.final_result.decisions = validated
+        decisions_json = format_decisions(validated)
         print(json.dumps(decisions_json, ensure_ascii=False, indent=2))
         print(f"\n使用资金: ¥{state.final_result.cash_used:,.0f}")
         print(f"剩余资金: ¥{state.final_result.cash_remaining:,.0f}")

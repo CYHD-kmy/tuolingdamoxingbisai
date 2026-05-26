@@ -114,6 +114,11 @@ class AKShareFetcher:
 
     name = "akshare"
 
+    # 全市场快照缓存 (避免每次获取单只股票行情时重复下载 5000+ 条数据)
+    _spot_cache: pd.DataFrame | None = None
+    _spot_cache_time: float = 0.0
+    _SPOT_CACHE_TTL: float = 60.0  # 快照缓存 60 秒
+
     def _sleep(self) -> None:
         time.sleep(random.uniform(1.0, 3.0))
 
@@ -288,12 +293,20 @@ class AKShareFetcher:
         return records
 
     def _fetch_realtime(self, code: str) -> RealtimeQuote:
-        """从东方财富获取实时行情"""
+        """从东方财富获取实时行情 (全市场快照缓存 60s，避免重复下载)"""
         import akshare as ak
 
         em_code = self._eastmoney_code(code)
         try:
-            df = ak.stock_zh_a_spot_em()
+            # 使用缓存的全市场快照，避免每次调用都下载 5000+ 条数据
+            now = time.time()
+            if (AKShareFetcher._spot_cache is None
+                    or now - AKShareFetcher._spot_cache_time > AKShareFetcher._SPOT_CACHE_TTL):
+                AKShareFetcher._spot_cache = ak.stock_zh_a_spot_em()
+                AKShareFetcher._spot_cache_time = now
+                logger.debug("akshare: 刷新全市场快照缓存 (%d 条)", len(AKShareFetcher._spot_cache))
+
+            df = AKShareFetcher._spot_cache
             row = df[df["代码"] == em_code]
             if row.empty:
                 raise ValueError(f"代码 {em_code} 未找到")
@@ -347,7 +360,7 @@ class AKShareFetcher:
         )
 
     def _fetch_stock_info(self, code: str) -> dict:
-        """获取个股基本信息"""
+        """获取个股基本信息 (含上市日期)"""
         import akshare as ak
 
         em_code = self._eastmoney_code(code)
@@ -356,7 +369,7 @@ class AKShareFetcher:
         if row.empty:
             return {}
         r = row.iloc[0]
-        return {
+        info = {
             "code": self._normalize_code(code),
             "name": str(r.get("名称", "")),
             "industry": str(r.get("所属行业", "")),
@@ -365,6 +378,20 @@ class AKShareFetcher:
             "total_mv": float(r.get("总市值", 0) or 0) / 1e8,
             "float_mv": float(r.get("流通市值", 0) or 0) / 1e8,
         }
+
+        # 补充上市日期 (需额外 API 调用)
+        try:
+            self._sleep()
+            detail = ak.stock_individual_info_em(symbol=em_code)
+            if detail is not None and not detail.empty:
+                detail_dict = dict(zip(detail["item"], detail["value"]))
+                ipo_date = detail_dict.get("上市时间", "")
+                if ipo_date and str(ipo_date) != "None":
+                    info["ipo_date"] = str(ipo_date)[:10]
+        except Exception:
+            logger.debug("akshare: 获取 %s 上市日期失败，跳过新股过滤", code)
+
+        return info
 
     def _fetch_fund_flow(self, code: str, days: int) -> list[FundFlow]:
         """获取资金流向"""
@@ -476,24 +503,57 @@ class AKShareFetcher:
         return snapshots
 
     def _fetch_news(self, keyword: str, days: int) -> list[dict]:
-        """财经新闻搜索"""
+        """财经新闻搜索 — 优先用个股新闻接口，失败则尝试关键词搜索"""
         import akshare as ak
 
+        results: list[dict] = []
+
+        # 首先尝试个股新闻 (keyword 为股票代码时工作)
         try:
             df = ak.stock_zh_a_news(symbol=keyword)
-            if df is None or df.empty:
-                return []
-            results = []
-            for _, row in df.head(20).iterrows():
-                results.append({
-                    "title": str(row.get("title", row.get("标题", ""))),
-                    "content": str(row.get("content", row.get("内容", "")))[:500],
-                    "time": str(row.get("time", row.get("时间", ""))),
-                    "source": str(row.get("source", row.get("来源", ""))),
-                })
-            return results
+            if df is not None and not df.empty:
+                for _, row in df.head(20).iterrows():
+                    results.append({
+                        "title": str(row.get("title", row.get("标题", ""))),
+                        "content": str(row.get("content", row.get("内容", "")))[:500],
+                        "time": str(row.get("time", row.get("时间", ""))),
+                        "source": str(row.get("source", row.get("来源", ""))),
+                    })
+                if results:
+                    return results
         except Exception:
-            return []
+            pass
+
+        # 备选: 使用东方财富关键词搜索 (适用于非代码关键词)
+        try:
+            em_code = self._eastmoney_code(keyword) if keyword.isdigit() else ""
+            symbol = em_code or keyword
+            url = (
+                "https://search-api-web.eastmoney.com/search/jsonp"
+                f"?cb=callback&keyword={symbol}&pageindex=1&pagesize=15"
+            )
+            import requests as _requests
+            resp = _requests.get(url, timeout=10, headers={
+                "Referer": "https://so.eastmoney.com/",
+            })
+            if resp.status_code == 200:
+                text = resp.text
+                import json as _json
+                if text.startswith("callback("):
+                    text = text[9:-1]
+                data = _json.loads(text)
+                articles = data.get("Data", {}).get("Report", [])
+                for a in articles[:15]:
+                    results.append({
+                        "title": a.get("Title", a.get("title", "")),
+                        "content": a.get("Summary", a.get("Content", ""))[:500],
+                        "time": a.get("PublishTime", a.get("time", "")),
+                        "source": a.get("Source", a.get("source", "")),
+                    })
+        except Exception:
+            pass
+
+        return results
 
     def _fetch_announcements(self, code: str, days: int) -> list[dict]:
         """个股公告"""

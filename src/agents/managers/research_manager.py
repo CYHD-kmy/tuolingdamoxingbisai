@@ -15,6 +15,7 @@ from ..models import DebateResult, ResearchVerdict
 from ..researchers.engine import debate_result_to_text
 from ...llm.client import LLMClient
 from ...llm.schema import Message
+from ...utils.validators import extract_json
 
 logger = logging.getLogger(__name__)
 
@@ -119,17 +120,7 @@ class ResearchManager:
     def _parse_verdict(raw: str, code: str, name: str) -> ResearchVerdict:
         """解析研究主管的 JSON 输出"""
         try:
-            if "```json" in raw:
-                start = raw.index("```json") + 7
-                end = raw.index("```", start)
-                raw = raw[start:end]
-            elif "```" in raw:
-                start = raw.index("```") + 3
-                end = raw.index("```", start)
-                raw = raw[start:end]
-            if "{" in raw and "}" in raw:
-                raw = raw[raw.index("{"):raw.rindex("}") + 1]
-            data = json.loads(raw)
+            data = json.loads(extract_json(raw))
         except (json.JSONDecodeError, ValueError):
             logger.warning("ResearchManager: JSON 解析失败，使用保守估计")
             return ResearchVerdict(

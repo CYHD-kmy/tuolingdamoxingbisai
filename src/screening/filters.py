@@ -15,14 +15,9 @@ from datetime import date, datetime, timedelta
 from typing import Optional
 
 from ..data.fetchers.akshare_fetcher import MarketSnapshot
+from ..utils.config import get_config
 
 logger = logging.getLogger(__name__)
-
-# IPO 最短天数 — 新股上市不足此天数直接排除
-MIN_LISTING_DAYS = 60
-
-# 日均成交额下限 (元) — 低于此值的股票流动性太差
-MIN_DAILY_AMOUNT = 50_000_000  # 5000万
 
 
 def filter_tradable(
@@ -37,8 +32,9 @@ def filter_tradable(
 
     返回: 通过过滤的快照列表
     """
+    cfg = get_config()
     today = datetime.now().date()
-    cutoff = today - timedelta(days=MIN_LISTING_DAYS)
+    cutoff = today - timedelta(days=cfg.min_listing_days)
 
     passed = []
     st_count = 0
@@ -80,13 +76,15 @@ def filter_tradable(
 
 def filter_liquidity(
     snapshots: list[MarketSnapshot],
-    min_amount: float = MIN_DAILY_AMOUNT,
+    min_amount: float | None = None,
 ) -> list[MarketSnapshot]:
     """
     剔除日均成交额不足的股票，确保入选标的可交易。
 
     MarketSnapshot.amount 已是当日成交额，作为日均近似值。
     """
+    if min_amount is None:
+        min_amount = get_config().min_daily_amount
     passed = [s for s in snapshots if s.amount >= min_amount]
     logger.info(
         "filter_liquidity: %d -> %d (剔除 成交额<%d万)",
@@ -97,16 +95,19 @@ def filter_liquidity(
 
 def filter_volatility(
     daily_data: dict[str, list],
-    max_volatility_pct: float = 15.0,
+    max_volatility_pct: float | None = None,
 ) -> set[str]:
     """
     剔除近期波动异常剧烈的股票。
 
     daily_data: {code: [StockDaily, ...]}
-    max_volatility_pct: 单日涨跌幅绝对值上限
+    max_volatility_pct: 单日涨跌幅绝对值上限 (默认从 Config 读取)
 
     返回: 应被剔除的 code 集合
     """
+    if max_volatility_pct is None:
+        max_volatility_pct = get_config().max_volatility_pct
+
     excluded: set[str] = set()
     for code, records in daily_data.items():
         if not records:
@@ -116,7 +117,7 @@ def filter_volatility(
                 excluded.add(code)
                 break
 
-    logger.info("filter_volatility: 剔除 %d 只异常波动股", len(excluded))
+    logger.info("filter_volatility: 剔除 %d 只异常波动股 (阈值 %.1f%%)", len(excluded), max_volatility_pct)
     return excluded
 
 

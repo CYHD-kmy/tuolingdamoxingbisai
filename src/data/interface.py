@@ -51,7 +51,6 @@ class UnifiedDataInterface:
         ]
         fetchers.sort(key=lambda f: self._config.fetcher_priority(f.name))
         self._fetchers = fetchers
-        self._primary = fetchers[0]
 
     # ── 公开 API ─────────────────────────────
 

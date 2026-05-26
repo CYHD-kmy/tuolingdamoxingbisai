@@ -17,6 +17,7 @@ from typing import Any
 
 from ..llm.schema import Message, Tool, ToolResult
 from ..llm.client import LLMClient
+from ..utils.validators import extract_json
 
 logger = logging.getLogger(__name__)
 
@@ -215,8 +216,7 @@ class BaseAnalyst(ABC):
     def _parse_report(self, content: str, code: str, name: str) -> AnalystReport:
         """从 LLM 输出中提取 JSON 报告"""
         try:
-            # 尝试提取 JSON 块
-            json_str = _extract_json(content)
+            json_str = extract_json(content)
             data = json.loads(json_str)
             data.setdefault("analyst_type", self.analyst_type)
             data.setdefault("code", code)
@@ -247,25 +247,6 @@ def _daily_to_dict(d: Any) -> dict[str, Any]:
         "macd_dif": d.macd_dif, "macd_dea": d.macd_dea, "macd_bar": d.macd_bar,
         "rsi_6": d.rsi_6, "rsi_14": d.rsi_14,
     }
-
-
-def _extract_json(text: str) -> str:
-    """从文本中提取 JSON 块"""
-    # 如果文本中包含 ```json ... ``` 块
-    if "```json" in text:
-        start = text.index("```json") + 7
-        end = text.index("```", start)
-        return text[start:end].strip()
-    if "```" in text:
-        start = text.index("```") + 3
-        end = text.index("```", start)
-        return text[start:end].strip()
-    # 尝试找到 { ... }
-    if "{" in text and "}" in text:
-        start = text.index("{")
-        end = text.rindex("}") + 1
-        return text[start:end]
-    return text
 
 
 def _guess_signal(content: str) -> str:

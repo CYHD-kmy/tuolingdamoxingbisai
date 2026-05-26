@@ -69,6 +69,7 @@ def _create_llm(
     创建 LLM 客户端 (缓存)。
 
     model_key: "quick" 或 "deep"
+    优先级: 显式覆盖 > 工厂默认值 > Config 全局默认值
     """
     config = get_config()
 
@@ -85,8 +86,20 @@ def _create_llm(
             "LLM_API_KEY 未设置。请设置环境变量: export LLM_API_KEY=sk-xxx"
         )
 
-    temp = overrides.pop("temperature", None) or temperature
-    tok = overrides.pop("max_tokens", None) or max_tokens
+    # 优先级: 显式 overrides > 工厂参数 > Config 全局默认
+    temp = overrides.pop("temperature", None)
+    if temp is None:
+        temp = temperature
+    tok = overrides.pop("max_tokens", None)
+    if tok is None:
+        tok = max_tokens
+
+    # 如果用户通过 .env 设置了 LLM_TEMPERATURE / LLM_MAX_TOKENS，作为兜底默认
+    # (仅在用户未显式传参且工厂未覆盖时生效)
+    if config.llm_temperature != 0.3 and temp == temperature:
+        temp = config.llm_temperature
+    if config.llm_max_tokens != 4096 and tok == max_tokens:
+        tok = config.llm_max_tokens
 
     logger.info(
         "创建 LLM 客户端: model=%s type=%s temp=%.1f max_tokens=%d timeout=%ds",

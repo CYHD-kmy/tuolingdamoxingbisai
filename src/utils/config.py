@@ -46,6 +46,7 @@ class Config:
     min_daily_amount: float = 50_000_000    # 最小日均成交额 (5000万)
     max_candidates: int = 20                # 海选后进入深度分析的股票数
     min_listing_days: int = 60              # 排除上市不足60天的新股
+    max_volatility_pct: float = 9.8         # 单日涨跌幅异常阈值 (A股±10%涨跌停内)
 
     # ── 风控参数 ──────────────────────────────
     initial_capital: float = 500_000.0      # 初始虚拟资金 50万
