@@ -172,6 +172,56 @@ class RiskManager:
         )
         return limits
 
+    # ── ETF 风控 ──────────────────────────────
+
+    def compute_etf_limits(
+        self,
+        verdicts: list[ResearchVerdict],
+        daily_data: dict[str, list[Any]],
+    ) -> dict[str, PositionLimit]:
+        """
+        为 ETF 候选计算仓位上限 (简化版，跳过行业集中度/解禁/相关性检查)。
+        """
+        limits: dict[str, PositionLimit] = {}
+        etf_max_pct = self._cfg.etf_max_single_position
+
+        for v in verdicts:
+            if v.direction != "buy":
+                limits[v.code] = PositionLimit(
+                    code=v.code, name=v.name,
+                    max_position_pct=0, max_shares=0, max_value=0,
+                    asset_type="etf",
+                    risk_flags=[f"方向不是buy: {v.direction}"],
+                )
+                continue
+
+            vol_mult = 1.0
+            conf_mult = 0.5 + v.confidence * 0.5
+            final_pct = min(etf_max_pct * vol_mult * conf_mult, etf_max_pct)
+
+            price = self._get_latest_price(v.code, daily_data)
+            if price > 0:
+                max_value = self._capital * final_pct
+                max_shares = int(max_value / price / LOT_SIZE) * LOT_SIZE
+            else:
+                max_value = 0.0
+                max_shares = 0
+
+            limits[v.code] = PositionLimit(
+                code=v.code, name=v.name,
+                max_position_pct=round(final_pct, 4),
+                max_shares=max_shares,
+                max_value=round(max_value, 2),
+                asset_type="etf",
+            )
+
+        logger.info(
+            "RiskManager(ETF): %d 个 ETF 计算完毕, %d 可买入",
+            len(verdicts),
+            sum(1 for l in limits.values() if l.max_shares > 0),
+        )
+        return limits
+
     # ── 日内熔断 ──────────────────────────────
 
     def check_drawdown(self, current_value: float) -> bool:

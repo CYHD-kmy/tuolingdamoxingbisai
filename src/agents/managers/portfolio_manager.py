@@ -64,6 +64,65 @@ class PortfolioManager:
     def __init__(self, deep_llm: LLMClient) -> None:
         self._llm = deep_llm
 
+    def construct_etf(
+        self,
+        verdicts: list[ResearchVerdict],
+        limits: dict[str, PositionLimit],
+        daily_data: dict[str, list],
+        cash_available: float,
+        total_capital: float = 500_000.0,
+    ) -> PortfolioResult:
+        """
+        ETF 组合构建 — 确定性规则，不消耗 LLM Token。
+
+        按置信度降序分配，每只 ETF 最多占 etf_max_single_position。
+        """
+        decisions: list[FinalDecision] = []
+        remaining = cash_available
+
+        buy_candidates = [
+            v for v in verdicts
+            if v.direction == "buy" and v.code in limits and limits[v.code].max_shares > 0
+        ]
+        buy_candidates.sort(key=lambda x: x.confidence, reverse=True)
+
+        for v in buy_candidates:
+            if remaining <= 0:
+                break
+
+            limit = limits[v.code]
+            price = self._get_price(v.code, daily_data)
+            if price <= 0:
+                continue
+
+            affordable = int(remaining / price / 100) * 100
+            shares = min(affordable, limit.max_shares)
+            if shares < 100:
+                continue
+
+            cost = shares * price
+            decisions.append(FinalDecision(
+                symbol=v.code,
+                symbol_name=v.name,
+                volume=shares,
+                entry_price=price,
+                asset_type="etf",
+            ))
+            remaining -= cost
+
+        cash_used = sum(d.volume * d.entry_price for d in decisions)
+        logger.info(
+            "PortfolioManager(ETF): %d 笔决策, 使用资金 ¥%.0f/¥%.0f",
+            len(decisions), cash_used, cash_available,
+        )
+
+        return PortfolioResult(
+            decisions=decisions,
+            cash_used=round(cash_used, 2),
+            cash_remaining=round(cash_available - cash_used, 2),
+            total_positions=len(decisions),
+        )
+
     def construct(
         self,
         verdicts: list[ResearchVerdict],

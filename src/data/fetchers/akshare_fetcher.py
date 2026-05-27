@@ -747,10 +747,13 @@ class AKShareFetcher:
 
     def get_etf_daily(self, code: str, days: int = 60) -> list[StockDaily]:
         """获取 ETF 日线数据 (复用 StockDaily 结构)"""
+        if AKShareFetcher._eastmoney_unavailable:
+            return []
         try:
             return self._retry(self._fetch_etf_daily, code, days)
         except Exception:
-            logger.exception("akshare: 获取ETF日线失败 %s", code)
+            AKShareFetcher._eastmoney_unavailable = True
+            logger.debug("akshare: 获取ETF日线失败 %s (已禁用Eastmoney)", code)
             return []
 
     def _fetch_etf_daily(self, code: str, days: int) -> list[StockDaily]:

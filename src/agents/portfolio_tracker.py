@@ -33,7 +33,7 @@ _POSITIONS_FILE = "positions.json"
 
 @dataclass
 class Position:
-    """单只股票持仓"""
+    """单只股票/ETF 持仓"""
     code: str
     name: str
     shares: int
@@ -41,6 +41,7 @@ class Position:
     entry_date: str          # 首次建仓日期
     last_price: float = 0.0  # 最新市价
     industry: str = ""
+    asset_type: str = "stock"  # "stock" / "etf"
 
     @property
     def cost_value(self) -> float:
@@ -133,6 +134,7 @@ class PortfolioTracker:
                 entry_date=pos_data.get("entry_date", ""),
                 last_price=pos_data.get("last_price", 0.0),
                 industry=pos_data.get("industry", ""),
+                asset_type=pos_data.get("asset_type", "stock"),
             )
 
         logger.info(
@@ -157,6 +159,7 @@ class PortfolioTracker:
                     "entry_date": p.entry_date,
                     "last_price": p.last_price,
                     "industry": p.industry,
+                    "asset_type": p.asset_type,
                 }
                 for code, p in self.positions.items() if p.shares > 0
             },
@@ -210,6 +213,7 @@ class PortfolioTracker:
                     entry_date=old.entry_date,
                     last_price=price,
                     industry=industries.get(d.symbol, old.industry),
+                    asset_type=getattr(d, "asset_type", "stock") or old.asset_type,
                 )
             else:
                 self.positions[d.symbol] = Position(
@@ -220,6 +224,7 @@ class PortfolioTracker:
                     entry_date=today,
                     last_price=price,
                     industry=industries.get(d.symbol, ""),
+                    asset_type=getattr(d, "asset_type", "stock") or "stock",
                 )
 
             self.cash -= cost
@@ -294,6 +299,7 @@ class PortfolioTracker:
                     "pnl": round(p.unrealized_pnl, 2),
                     "pnl_pct": round(p.pnl_pct, 2),
                     "industry": p.industry,
+                    "asset_type": p.asset_type,
                 }
                 for p in self.positions.values() if p.shares > 0
             ],

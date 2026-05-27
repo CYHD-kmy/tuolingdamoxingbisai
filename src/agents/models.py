@@ -43,13 +43,14 @@ class ResearchVerdict:
     risk_level: str = "medium"  # "low" / "medium" / "high"
     core_reasoning: str = ""    # 核心理由
     key_risks: list[str] = field(default_factory=list)
+    asset_type: str = "stock"   # "stock" / "etf"
 
 
 # ── 风控 ──────────────────────────────────────
 
 @dataclass
 class PositionLimit:
-    """单只股票的风控约束"""
+    """单只股票/ETF 的风控约束"""
     code: str
     name: str
     max_position_pct: float   # 最大仓位比例 (0-1)
@@ -57,6 +58,7 @@ class PositionLimit:
     max_value: float          # 最大可买金额
     volatility: float = 0.0   # 近期波动率 %
     risk_flags: list[str] = field(default_factory=list)
+    asset_type: str = "stock"  # "stock" / "etf"
 
 
 # ── 最终决策 ──────────────────────────────────
@@ -68,6 +70,7 @@ class FinalDecision:
     symbol_name: str
     volume: int
     entry_price: float = 0.0  # 入场价格，用于计算浮动盈亏
+    asset_type: str = "stock"  # "stock" / "etf"
 
     def to_dict(self) -> dict:
         d = {"symbol": self.symbol, "symbol_name": self.symbol_name, "volume": self.volume}

@@ -42,6 +42,12 @@ class PipelineState:
     # {code: ResearchVerdict}
     verdicts: dict[str, ResearchVerdict] = field(default_factory=dict)
 
+    # ── ETF 并行流水线 ───────────────────────
+    etf_candidates: list[Any] = field(default_factory=list)
+    etf_analyst_reports: dict[str, list[AnalystReport]] = field(default_factory=dict)
+    etf_verdicts: dict[str, ResearchVerdict] = field(default_factory=dict)
+    etf_position_limits: dict[str, PositionLimit] = field(default_factory=dict)
+
     # ── 阶段 3: 风控与决策 ──────────────────
     position_limits: dict[str, PositionLimit] = field(default_factory=dict)
     final_result: PortfolioResult | None = None

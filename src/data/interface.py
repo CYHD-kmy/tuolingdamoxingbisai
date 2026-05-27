@@ -533,6 +533,22 @@ class UnifiedDataInterface:
             del futures
         return results
 
+    def batch_etf_daily(
+        self, codes: list[str], days: int = 20, max_workers: int = 4
+    ) -> dict[str, list[StockDaily]]:
+        """并发获取多个 ETF 的日线数据"""
+        results: dict[str, list[StockDaily]] = {}
+        with ThreadPoolExecutor(max_workers=max_workers) as pool:
+            futures = {pool.submit(self.get_etf_daily, c, days): c for c in codes}
+            for future in as_completed(futures):
+                code = futures[future]
+                try:
+                    results[code] = future.result(timeout=self._config.request_timeout * 2)
+                except Exception:
+                    results[code] = []
+            del futures
+        return results
+
     # ── 数据质量 ─────────────────────────────
 
     def is_tradable(self, code: str) -> bool:

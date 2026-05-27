@@ -120,6 +120,14 @@ class Config:
         default_factory=lambda: _env_bool("TRANSFORMER_RL_FEATURES", False)
     )
 
+    # ── ETF ──────────────────────────────────────
+    etf_enabled: bool = True
+    etf_max_allocation: float = 0.20       # ETF 最大资金占比
+    etf_max_candidates: int = 5            # ETF 候选数量
+    etf_min_daily_amount: float = 50_000_000   # ETF 最小日均成交额
+    etf_min_fund_size: float = 100_000_000     # ETF 最小基金规模
+    etf_max_single_position: float = 0.10  # 单只 ETF 最大仓位
+
     # ── 输出 ────────────────────────────────────
     results_dir: str = field(
         default_factory=lambda: str(_project_root() / "results")

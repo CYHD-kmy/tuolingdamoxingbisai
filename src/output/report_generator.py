@@ -30,6 +30,8 @@ def generate_daily_report(state: PipelineState, tracker=None) -> str:
     daily_data = getattr(state, "daily_data", {})
     elapsed = getattr(state, "elapsed", {})
     errors = getattr(state, "errors", [])
+    etf_candidates = getattr(state, "etf_candidates", [])
+    etf_verdicts = getattr(state, "etf_verdicts", {})
 
     # 账户概览
     equity = total_capital
@@ -53,6 +55,10 @@ def generate_daily_report(state: PipelineState, tracker=None) -> str:
 
     # ── 1. 操作摘要 ──
     lines.extend(_section_summary(candidates, verdicts, final_result, errors, total_capital))
+
+    # ── ETF 摘要 ──
+    if etf_candidates or etf_verdicts:
+        lines.extend(_section_etf(etf_candidates, etf_verdicts, final_result))
 
     # ── 2. 决策推理链 ──
     lines.extend(_section_reasoning(verdicts, analyst_reports))
@@ -103,6 +109,41 @@ def _section_summary(candidates, verdicts, final_result, errors, total_capital: 
     return lines
 
 
+def _section_etf(etf_candidates, etf_verdicts, final_result) -> list[str]:
+    lines = ["## ETF 操作摘要", ""]
+
+    if not etf_candidates:
+        lines.append("今日 ETF 筛选无候选。")
+        lines.append("")
+        return lines
+
+    lines.append(f"ETF 筛选候选: {len(etf_candidates)} 只")
+    lines.append("")
+    lines.append("| 代码 | 名称 | 评分 | 方向 | 置信度 | 成交额(亿) |")
+    lines.append("|------|------|------|------|--------|------------|")
+    for c in etf_candidates:
+        v = etf_verdicts.get(c.code)
+        direction = getattr(v, "direction", "-") if v else "-"
+        conf = f"{v.confidence:.0%}" if v and v.confidence else "-"
+        amount_yi = c.amount / 1e8 if c.amount else 0
+        lines.append(f"| {c.code} | {c.name} | {c.score:.0f} | {direction} | {conf} | {amount_yi:.1f} |")
+    lines.append("")
+
+    # ETF 买入决策
+    if final_result:
+        etf_decisions = [d for d in final_result.decisions if getattr(d, "asset_type", "stock") == "etf"]
+        if etf_decisions:
+            lines.append("**ETF 买入决策**:")
+            for d in etf_decisions:
+                lines.append(f"- {d.symbol} {d.symbol_name}: {d.volume} 份 @ ¥{d.entry_price:.3f}")
+            lines.append("")
+        else:
+            lines.append("今日无 ETF 买入操作。")
+            lines.append("")
+
+    return lines
+
+
 def _section_reasoning(verdicts, analyst_reports) -> list[str]:
     lines = ["## 二、决策推理链", ""]
 
@@ -147,12 +188,13 @@ def _section_portfolio(final_result, position_limits, daily_data, tracker=None) 
                      f"持仓市值: ¥{summary['market_value']:,.0f}    "
                      f"累计收益: ¥{summary['cumulative_pnl']:+,.0f}")
         lines.append("")
-        lines.append("| 代码 | 名称 | 股数 | 成本 | 现价 | 浮动盈亏 | 行业 |")
-        lines.append("|------|------|------|------|------|----------|------|")
+        lines.append("| 代码 | 名称 | 类型 | 股数 | 成本 | 现价 | 浮动盈亏 | 行业 |")
+        lines.append("|------|------|------|------|------|------|----------|------|")
         for p in summary["positions"]:
             pnl = f"¥{p['pnl']:+,.0f} ({p['pnl_pct']:+.1f}%)" if p["shares"] > 0 else "-"
+            atype = "ETF" if p.get("asset_type") == "etf" else "股票"
             lines.append(
-                f"| {p['code']} | {p['name']} | {p['shares']} | "
+                f"| {p['code']} | {p['name']} | {atype} | {p['shares']} | "
                 f"¥{p['avg_cost']:.2f} | ¥{p['last_price']:.2f} | "
                 f"{pnl} | {p.get('industry', '-')} |"
             )
