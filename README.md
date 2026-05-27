@@ -63,12 +63,17 @@ python -m src.main --rl-model results/rl_model.json    # RL 推断
 ### 启动 Web 看板
 
 ```bash
-# 方式一: 管理脚本
+# 方式一: 跨平台管理脚本 (推荐)
+python manage.py start       # 启动服务
+python manage.py status      # 查看状态
+python manage.py stop        # 停止服务
+
+# 方式二: Shell 管理脚本 (macOS/Linux)
 ./manage.sh start       # 启动服务
 ./manage.sh status      # 查看状态
 ./manage.sh stop        # 停止服务
 
-# 方式二: 直接启动
+# 方式三: 直接启动
 python -m src.api.server
 
 # 访问: http://localhost:8000
@@ -78,11 +83,19 @@ python -m src.api.server
 #   /report      日报
 ```
 
-### 开机自启 (macOS)
+### 开机自启
 
 ```bash
+# macOS (launchd)
 ./manage.sh install     # 安装 launchd 服务
 ./manage.sh uninstall   # 卸载
+
+# Linux (systemd)
+python manage.py install     # 安装 systemd 用户服务
+python manage.py uninstall   # 卸载
+
+# Windows
+python manage.py install     # 显示任务计划程序配置指引
 ```
 
 ## 环境变量
@@ -102,7 +115,7 @@ python -m src.api.server
 | 模块 | 路径 | 说明 |
 |------|------|------|
 | 数据层 | `src/data/` | 多源降级编排 (AKShare → Tushare → BaoStock) + 缓存 + 数据质量标记 (live/cached/fallback/stale) |
-| 海选筛选 | `src/screening/` | ST/停牌/新股过滤 + 10因子加权打分 + ETF筛选 (ETF模块已实现，待接入主流水线) |
+| 海选筛选 | `src/screening/` | ST/停牌/新股过滤 + 10因子加权打分 + ETF筛选 (已接入主流水线，支持股/ETF并行+混合组合) |
 | 分析Agent | `src/agents/` | 技术面/基本面/资金面/消息面 四维分析 + ETF分析师 + 多空辩论 + 管理团队 |
 | 工作流 | `src/graph/` | LangGraph 状态管理 + 流水线编排 |
 | LLM 适配 | `src/llm/` | OpenAI-compatible 客户端 (DeepSeek/OpenAI)，quick/deep 分层 |
@@ -277,7 +290,8 @@ zhitou-future/
 ├── 产品设计书.md
 ├── requirements.txt
 ├── .env.example
-├── manage.sh                         # 服务管理脚本
+├── manage.sh                         # 服务管理脚本 (macOS/Linux)
+├── manage.py                         # 跨平台管理脚本 (Windows/macOS/Linux)
 │
 ├── src/
 │   ├── main.py                       # 主入口
@@ -369,7 +383,7 @@ zhitou-future/
 │       ├── trading_calendar.py       #   A股交易日历
 │       └── validators.py             #   输出校验
 │
-└── tests/                            # 测试 (122 tests, 12 个文件)
+└── tests/                            # 测试 (153 tests, 13 个文件)
     ├── conftest.py                   #   pytest 配置
     ├── test_agents.py                #   Agent 层 (风控/辩论/模型/JSON解析)
     ├── test_api.py                   #   FastAPI 端点
