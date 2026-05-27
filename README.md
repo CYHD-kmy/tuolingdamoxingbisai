@@ -54,10 +54,16 @@ python -m src.main --demo
 python -m src.main
 
 # 5. 高级功能
-python -m src.main --backtest 20260501 20260526       # 历史回测
-python -m src.main --strategy momentum,quality         # 多策略竞争
-python -m src.main --rl-train --rl-episodes 200        # RL 训练
-python -m src.main --rl-model results/rl_model.json    # RL 推断
+python -m src.main --backtest 20260501 20260526                  # 历史回测
+python -m src.main --benchmark 000300                             # 回测基准指数 (可选，默认沪深300)
+python -m src.main --strategy momentum,quality                    # 多策略竞争 (5种: momentum/mean_reversion/quality/sentiment/all)
+python -m src.main --rl-train --rl-episodes 200                   # 强化学习训练
+python -m src.main --rl-model results/rl_model.json               # 加载RL模型推断
+
+# 6. Transformer 时序编码器 (Phase 4)
+python -m src.main --transformer-train --transformer-epochs 100   # 训练 Transformer
+export TRANSFORMER_ENABLED=true                                    # 启用 Transformer
+python -m src.main --demo                                          # 推理 (融合Transformer评分)
 ```
 
 ### 启动 Web 看板
@@ -147,7 +153,7 @@ python manage.py install     # 显示任务计划程序配置指引
 | 流动性 | 日均成交额 | 10% | > 5000 万，确保可交易 |
 | 筹码 | 股东人数变化 | 5% | 筹码集中度指标 |
 
-筛选流程: `5000+ → 剔除ST/停牌/新股 → 剔除成交额<5000万 → 10因子加权打分 → Top 20`
+筛选流程: `5000+ → 剔除 ST/*ST/停牌/新股(上市<60天) → 剔除 日均成交额<5000万 (流动性过滤) → 10因子加权打分 → Top 20`
 
 ### 四维分析师并行分析
 
@@ -195,16 +201,17 @@ Top 20 候选池中每只股票由 4 个分析师**并行**分析（各自使用
 
 ## 技术选型与复用
 
-| 模块 | 来源项目 | 复用程度 |
-|------|----------|----------|
-| 数据源适配器 | daily_stock_analysis `data_provider/` | 90% |
-| 多因子筛选 | daily_stock_analysis `stock_analyzer.py` | 80% |
-| Agent 框架 + 辩论 | TradingAgents-CN `agents/` + `graph/` | 70% |
-| LLM 适配层 | TradingAgents-CN `llm_clients/` | 95% |
-| 风控模块 | ai-hedge-fund `risk_manager.py` | 60% |
-| 组合管理 | ai-hedge-fund `portfolio_manager.py` | 50% |
+| 模块 | 来源项目 | 复用程度 | 适配工作 |
+|------|----------|----------|----------|
+| 数据源适配器 | daily_stock_analysis `data_provider/` | 90% | 精简为 A 股核心数据源 |
+| 多因子筛选 | daily_stock_analysis `stock_analyzer.py` | 80% | 提取多因子打分逻辑 |
+| Agent 框架 | TradingAgents-CN `agents/` + `graph/` | 70% | 简化为4分析+2研究员+1主管 |
+| 辩论模式 | TradingAgents-CN Bull/Bear | 80% | 调整辩论轮数和提示词 |
+| LLM 适配层 | TradingAgents-CN `llm_clients/` | 95% | 直接复用 |
+| 风控模块 | ai-hedge-fund `risk_manager.py` | 60% | 从美股适配到A股规则 |
+| 组合管理 | ai-hedge-fund `portfolio_manager.py` | 50% | 修改输出格式为赛道JSON |
 
-技术栈: LangGraph (编排) / AKShare + Tushare + BaoStock (数据) / FastAPI (Web) / ChromaDB (记忆, 第二阶段)
+技术栈: LangGraph (编排) / AKShare + Tushare + BaoStock (数据) / FastAPI (Web) / ChromaDB (记忆) / APScheduler (调度)
 
 ## 策略可解释性
 
@@ -302,18 +309,30 @@ zhitou-future/
 │   │   ├── interface.py              #   统一数据接口
 │   │   ├── cache.py                  #   数据缓存
 │   │   └── fetchers/                 #   数据源适配器
-│   │
-│   ├── screening/                    # 海选筛选
-│   │   ├── pipeline.py               #   筛选管道
-│   │   ├── scorer.py                 #   多因子打分
-│   │   └── filters.py                #   ST/停牌/流动性过滤
+│   │       ├── akshare_fetcher.py    #     AKShare (主力，免费)
+│   │       ├── tushare_fetcher.py    #     Tushare (增强，需Token)
+│   │       └── baostock_fetcher.py   #     BaoStock (兜底，免费)
 │   │
 │   ├── agents/                       # Agent 层
-│   │   ├── analysts/                 #   四维分析师 + ETF分析师
-│   │   ├── researchers/              #   辩论研究员 (多头/空头/引擎, bigram收敛检测)
-│   │   ├── managers/                 #   决策主管 (研究/风控/组合)
-│   │   ├── fallback.py              #   LLM 降级: 确定性规则引擎
-│   │   └── portfolio_tracker.py     #   跨日持仓追踪 (成本/盈亏/行业暴露)
+│   │   ├── base.py                   #   Agent 基类
+│   │   ├── models.py                 #   数据模型
+│   │   ├── tools.py                  #   Agent 工具集 (Tool-Calling 3轮上限)
+│   │   ├── analysts/                 #   四维分析师
+│   │   │   ├── technical.py          #     技术面 (均线/MACD/RSI/布林带)
+│   │   │   ├── fundamentals.py       #     基本面 (PE/PB/ROE/营收增速)
+│   │   │   ├── fund_flow.py          #     资金面 (主力/北向/融资融券)
+│   │   │   ├── news_sentiment.py     #     消息面 (新闻情感/热点匹配)
+│   │   │   └── etf.py                #     ETF 分析师
+│   │   ├── researchers/              #   辩论研究员
+│   │   │   ├── bull.py               #     多头研究员
+│   │   │   ├── bear.py               #     空头研究员
+│   │   │   └── engine.py             #     辩论引擎 (max 3轮 + 收敛检测)
+│   │   ├── managers/                 #   决策主管
+│   │   │   ├── research_manager.py   #     研究主管 (deep LLM 综合研判)
+│   │   │   ├── risk_manager.py       #     风控主管 (确定性规则)
+│   │   │   └── portfolio_manager.py  #     组合主管 (deep LLM 最终配置)
+│   │   ├── fallback.py              #   LLM 降级: 确定性规则引擎 (无LLM时全链路接管)
+│   │   └── portfolio_tracker.py     #   跨日持仓追踪 (成本/盈亏/行业暴露/日收益历史)
 │   │
 │   ├── graph/                        # LangGraph 编排
 │   │   ├── state.py                  #   共享状态定义
@@ -332,11 +351,11 @@ zhitou-future/
 │   │
 │   ├── backtesting/                  # 回测框架
 │   │   ├── engine.py                 #   逐日历史回放引擎
-│   │   ├── metrics.py                #   绩效指标 (Sharpe/MaxDD/Calmar)
+│   │   ├── metrics.py                #   绩效指标 (Sharpe/MaxDD/Calmar/ProfitFactor/WinRate)
 │   │   └── report.py                 #   JSON+MD 双格式报告
 │   │
 │   ├── optimization/                 # 组合优化
-│   │   └── risk_parity.py            #   ERC/MinVar/MaxDiv 权重分配
+│   │   └── risk_parity.py            #   ERC / MinVariance / MaxDiversification 权重分配
 │   │
 │   ├── strategies/                   # 多策略竞争
 │   │   ├── engine.py                 #   并行竞争引擎 + 软投票合并
@@ -355,33 +374,38 @@ zhitou-future/
 │   │   └── trainer.py                #   跨股票训练器
 │   │
 │   ├── transformer/                   # Transformer 时序编码器 (Phase 4)
-│   │   ├── features.py               #   StockDaily → 10维特征向量
-│   │   ├── embedding.py              #   输入投影 + 位置编码
-│   │   ├── attention.py              #   多头自注意力 (纯Python)
-│   │   ├── encoder.py                #   TransformerEncoderLayer + Encoder
-│   │   ├── model.py                  #   StockTransformer 完整模型
-│   │   ├── training.py               #   训练数据生成 + 训练循环
-│   │   └── scorer.py                 #   TransformerScorer (FactorScore 接口)
+│   │   ├── __init__.py                #   公开 API
+│   │   ├── features.py                #   StockDaily → 10维特征向量 + Z-score 归一化
+│   │   ├── embedding.py               #   输入投影 (Linear 10→32) + 正弦位置编码
+│   │   ├── attention.py               #   多头自注意力 (4头) + Softmax + 矩阵运算
+│   │   ├── encoder.py                 #   TransformerEncoderLayer + TransformerEncoder (2层)
+│   │   ├── model.py                   #   StockTransformer 完整模型 + JSON 序列化
+│   │   ├── training.py                #   训练数据生成(滑动窗口) + 训练循环(SGD + 解析反向传播)
+│   │   └── scorer.py                  #   TransformerScorer (与手工因子融合)
 │   │
 │   ├── monitoring/                   # 盘中监控
-│   │   └── monitor.py                #   止损/止盈/熔断 + Webhook告警
+│   │   └── monitor.py                #   30s轮询: 止损(-7%)/止盈(+15%)/熔断(-5%) + Webhook告警
 │   │
 │   ├── memory/                       # 向量记忆
 │   │   └── __init__.py              #   ChromaDB 历史行情索引
 │   │
 │   ├── api/                          # Web 看板
-│   │   ├── server.py                 #   FastAPI 服务 (9端点 + 4页面)
-│   │   └── static/                   #   前端页面 (HTML/CSS/JS)
+│   │   ├── server.py                 #   FastAPI 服务 (9 端点 + 5 页面路由)
+│   │   └── static/                   #   前端静态文件 (首页/看板/历史/日报)
 │   │
 │   ├── output/                       # 输出层
-│   │   ├── json_formatter.py         #   赛道 JSON 格式 + 校验
-│   │   ├── report_generator.py       #   Markdown 日报
-│   │   └── trace_logger.py           #   推理轨迹
+│   │   ├── json_formatter.py         #   赛道 JSON 格式 + 硬约束校验 (volume取整/预算/风控)
+│   │   ├── report_generator.py       #   Markdown 日报 (含持仓快照/推理链/明日关注)
+│   │   └── trace_logger.py           #   推理轨迹 (全链路回溯审计)
 │   │
 │   └── utils/                        # 工具
-│       ├── config.py                 #   配置管理
+│       ├── config.py                 #   配置管理 (环境变量 + .env)
 │       ├── trading_calendar.py       #   A股交易日历
 │       └── validators.py             #   输出校验
+│
+├── results/                          # 运行结果 (自动生成)
+│   ├── trace_YYYYMMDD.json           #   推理轨迹
+│   └── report_YYYYMMDD.md            #   日报
 │
 └── tests/                            # 测试 (153 tests, 13 个文件)
     ├── conftest.py                   #   pytest 配置
