@@ -8,6 +8,8 @@ BaoStock 数据适配器 — 兜底免费数据源。
 """
 
 import logging
+import threading
+import time
 from datetime import datetime, timedelta
 from typing import Optional
 
@@ -23,6 +25,36 @@ class BaoStockFetcher:
 
     _logged_in = False
     _login_attempted = False
+    _stock_basic_cache: dict[str, dict] | None = None  # code → {name, ipo_date}
+    _stock_basic_cache_time: float = 0.0
+    _stock_basic_lock: threading.Lock = threading.Lock()
+
+    @classmethod
+    def _warm_stock_basic_cache(cls):
+        """预热全市场股票基本信息缓存 (线程安全，一次查询，全量缓存)"""
+        with cls._stock_basic_lock:
+            now = time.time()
+            if cls._stock_basic_cache is not None:
+                return
+            # 最近已尝试过且失败，短时间内不再重试
+            if cls._stock_basic_cache_time > 0 and now - cls._stock_basic_cache_time <= 120:
+                return
+            cls._ensure_login()
+            import baostock as bs
+            rs = bs.query_stock_basic()
+            if rs.error_code != "0":
+                logger.warning("baostock: stock_basic 查询失败")
+                cls._stock_basic_cache = {}
+                cls._stock_basic_cache_time = now
+                return
+            cache: dict[str, dict] = {}
+            while rs.next():
+                row = rs.get_row_data()
+                code = row[0].replace("sh.", "").replace("sz.", "").replace("bj.", "")
+                cache[code] = {"name": row[1], "ipo_date": row[2] if len(row) > 2 else ""}
+            cls._stock_basic_cache = cache
+            cls._stock_basic_cache_time = now
+            logger.info("baostock: 全市场股票基本信息缓存 %d 只", len(cache))
 
     @classmethod
     def _ensure_login(cls):
@@ -120,31 +152,21 @@ class BaoStockFetcher:
         )
 
     def get_stock_name(self, code: str) -> str:
-        self._ensure_login()
-        import baostock as bs
-
-        bs_code = self._bs_code(code)
-        rs = bs.query_stock_basic(code=bs_code)
-        if rs.error_code == "0":
-            while rs.next():
-                row = rs.get_row_data()
-                return row[1]  # code_name
+        self._warm_stock_basic_cache()
+        info = self._stock_basic_cache.get(code) if self._stock_basic_cache else None
+        if info:
+            return info.get("name", code)
         return code
 
     def get_stock_info(self, code: str) -> dict:
-        self._ensure_login()
-        import baostock as bs
-
-        bs_code = self._bs_code(code)
-        rs = bs.query_stock_basic(code=bs_code)
-        if rs.error_code == "0":
-            while rs.next():
-                row = rs.get_row_data()
-                return {
-                    "code": row[0].replace("sh.", "").replace("sz.", ""),
-                    "name": row[1],
-                    "ipo_date": row[2] if len(row) > 2 else "",
-                }
+        self._warm_stock_basic_cache()
+        info = self._stock_basic_cache.get(code) if self._stock_basic_cache else None
+        if info:
+            return {
+                "code": code,
+                "name": info.get("name", ""),
+                "ipo_date": info.get("ipo_date", ""),
+            }
         return {}
 
     def get_fund_flow(self, code: str, days: int = 5) -> list:

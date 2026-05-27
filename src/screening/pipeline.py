@@ -73,13 +73,36 @@ class ScreeningPipeline:
         total = len(snapshots)
         logger.info("1/5 全市场快照: %d 只", total)
 
-        # ── 2. 基础过滤 (ST/停牌/新股) ──────────
-        # 批量获取全部股票基本信息用于新股过滤
-        codes_all = extract_codes(snapshots)
-        stock_infos = self._data.batch_stock_info(codes_all) if codes_all else {}
+        # ── 1b. 预热 AKShare 缓存 (避免批量查询时线程争抢) ──
+        try:
+            from ..data.fetchers.akshare_fetcher import AKShareFetcher
+            AKShareFetcher._warm_spot_cache()
+        except Exception:
+            logger.debug("AKShare 缓存预热失败，跳过")
 
-        tradable = filter_tradable(snapshots, stock_infos)
-        logger.info("2/5 可交易过滤: %d 只", len(tradable))
+        # ── 1c. 预热 BaoStock 股票基本信息缓存 (避免 3000 只线程争抢) ──
+        try:
+            from ..data.fetchers.baostock_fetcher import BaoStockFetcher
+            BaoStockFetcher._warm_stock_basic_cache()
+        except Exception:
+            logger.debug("BaoStock 缓存预热失败，跳过")
+
+        # ── 2. 基础过滤 (ST/停牌/新股) ──────────
+        # 先做一轮快速过滤 (ST/停牌), 避免为全市场 3000 只各自查询 stock_info
+        pre_filtered = filter_tradable(snapshots, stock_infos=None)
+        logger.info("2/5 快速过滤(名称/停牌): %d 只", len(pre_filtered))
+
+        # 仅对通过快速过滤的股票批量获取基本信息 (新股票过滤需要 IPO 日期)
+        codes_pre = extract_codes(pre_filtered)
+        if codes_pre:
+            stock_infos = self._data.batch_stock_info(codes_pre)
+        else:
+            stock_infos = {}
+        logger.debug("2/5 批量获取 %d 只股票基本信息完成", len(stock_infos))
+
+        # 第二次过滤: 用基本信息做新股票过滤
+        tradable = filter_tradable(pre_filtered, stock_infos)
+        logger.info("2/5 新股过滤后: %d 只", len(tradable))
 
         # ── 3. 流动性过滤 ───────────────────────
         liquid = filter_liquidity(tradable)
@@ -87,68 +110,24 @@ class ScreeningPipeline:
             return ScreeningResult(candidates=[], total_screened=total, after_filters=0, errors=["无股票通过流动性过滤"])
         logger.info("3/5 流动性过滤: %d 只", len(liquid))
 
+        # ── 3b. 按成交额截断 (避免批量拉日线过多) ──
+        max_daily_batch = self._config.max_candidates * 25  # 500 for default max_candidates=20
+        if len(liquid) > max_daily_batch:
+            liquid.sort(key=lambda s: s.amount, reverse=True)
+            liquid = liquid[:max_daily_batch]
+            logger.info("3b/5 成交额截断: %d 只", len(liquid))
+
         # ── 4. 批量拉取日线和资金流向 ────────────
         codes = extract_codes(liquid)
         logger.info("4/5 批量拉取 %d 只股票数据...", len(codes))
 
-        daily_data = self._data.batch_daily_data(codes, days=30, max_workers=6)
+        daily_data = self._data.batch_daily_data(codes, days=30, max_workers=4)
         fund_flows = self._data.batch_fund_flows(codes, days=5, max_workers=6)
 
-        # ── 4b. 并发拉取增强数据源 (北向/财务/股东) ──
+        # ── 4b. 增强数据源仅对 Top-20 候选拉取 (见 step 6) ──
         northbound_stocks: dict[str, list[dict]] = {}
         financials: dict[str, list] = {}
         shareholders: dict[str, list] = {}
-
-        def _fetch_northbound(c: str) -> tuple[str, list | None, str]:
-            try:
-                nb = self._data.get_northbound_stock(c, days=10)
-                return (c, nb, "")
-            except Exception as e:
-                return (c, None, str(e))
-
-        def _fetch_financials(c: str) -> tuple[str, list | None, str]:
-            try:
-                fin = self._data.get_financial_indicators(c)
-                return (c, fin, "")
-            except Exception as e:
-                return (c, None, str(e))
-
-        def _fetch_shareholders(c: str) -> tuple[str, list | None, str]:
-            try:
-                sh = self._data.get_shareholder_count(c)
-                return (c, sh, "")
-            except Exception as e:
-                return (c, None, str(e))
-
-        fetch_tasks = []
-        for code in codes:
-            fetch_tasks.append((code, _fetch_northbound))
-            fetch_tasks.append((code, _fetch_financials))
-            fetch_tasks.append((code, _fetch_shareholders))
-
-        max_workers_enhanced = min(len(fetch_tasks), 8)
-        with ThreadPoolExecutor(max_workers=max_workers_enhanced) as pool:
-            futures = {pool.submit(fn, c): (c, fn.__name__) for c, fn in fetch_tasks}
-            for future in as_completed(futures):
-                code, fn_name = futures[future]
-                try:
-                    c, data, err = future.result()
-                    if err:
-                        logger.debug("4b/5 %s 获取失败: %s", fn_name, err)
-                    elif data:
-                        if fn_name == "_fetch_northbound":
-                            northbound_stocks[c] = data
-                        elif fn_name == "_fetch_financials":
-                            financials[c] = data
-                        elif fn_name == "_fetch_shareholders":
-                            shareholders[c] = data
-                except Exception as e:
-                    logger.debug("4b/5 %s %s 异常: %s", code, fn_name, e)
-
-        if northbound_stocks or financials or shareholders:
-            logger.info("4b/5 增强数据: 北向 %d只, 财务 %d只, 股东 %d只 (%.1fs)",
-                        len(northbound_stocks), len(financials), len(shareholders),
-                        time.monotonic() - t0)
 
         # ── 5. 波动率过滤 ───────────────────────
         exclude_vol = filter_volatility(daily_data)

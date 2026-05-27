@@ -102,31 +102,38 @@ def main(demo: bool = False) -> None:
     print("  最终决策 (赛道 JSON 格式)")
     print("=" * 50)
 
-    if state.final_result and state.final_result.decisions:
+    final_result = getattr(state, "final_result", None)
+    position_limits = getattr(state, "position_limits", {})
+    daily_data = getattr(state, "daily_data", {})
+    verdicts = getattr(state, "verdicts", {})
+    errors = getattr(state, "errors", [])
+    elapsed = getattr(state, "elapsed", {})
+
+    if final_result and final_result.decisions:
         validated = validate_decisions(
-            state.final_result.decisions,
-            state.position_limits,
-            state.daily_data,
+            final_result.decisions,
+            position_limits,
+            daily_data,
             cash_available=config.initial_capital,
             min_cash_reserve=config.min_cash_reserve,
             total_capital=config.initial_capital,
-            verdicts=state.verdicts,
+            verdicts=verdicts,
         )
-        state.final_result.decisions = validated
+        final_result.decisions = validated
         decisions_json = format_decisions(validated)
         print(json.dumps(decisions_json, ensure_ascii=False, indent=2))
-        print(f"\n使用资金: ¥{state.final_result.cash_used:,.0f}")
-        print(f"剩余资金: ¥{state.final_result.cash_remaining:,.0f}")
+        print(f"\n使用资金: ¥{final_result.cash_used:,.0f}")
+        print(f"剩余资金: ¥{final_result.cash_remaining:,.0f}")
     else:
         print("[]  (空仓)")
 
     print(f"\n总耗时: {total_elapsed:.1f}s")
-    for stage, elapsed in state.elapsed.items():
-        print(f"  {stage}: {elapsed:.1f}s")
+    for stage, e in elapsed.items():
+        print(f"  {stage}: {e:.1f}s")
 
-    if state.errors:
-        print(f"\n警告/错误 ({len(state.errors)}条):")
-        for e in state.errors[:5]:
+    if errors:
+        print(f"\n警告/错误 ({len(errors)}条):")
+        for e in errors[:5]:
             print(f"  - {e}")
 
     # 保存结果
@@ -152,11 +159,13 @@ def main(demo: bool = False) -> None:
 
             tracker = PortfolioTracker(total_capital=config.initial_capital, results_dir=config.results_dir)
             tracker.load()
+            _final = getattr(state, "final_result", None)
+            _daily = getattr(state, "daily_data", {})
             tracker.apply_decisions(
-                state.final_result.decisions if state.final_result else [],
-                state.daily_data,
+                _final.decisions if _final else [],
+                _daily,
             )
-            tracker.update_prices(state.daily_data)
+            tracker.update_prices(_daily)
             tracker.record_daily()
             tracker.save()
             logger.info("持仓已保存: %.0f%% 仓位, 累计盈亏 ¥%.0f",

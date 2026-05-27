@@ -47,8 +47,8 @@ def filter_tradable(
             st_count += 1
             continue
 
-        # 2. 停牌过滤 (价格或换手率接近0)
-        if s.price <= 0.01 or s.turnover <= 0.001:
+        # 2. 停牌过滤 (价格为0则停牌; 换手率0仅当价格也为0时可信)
+        if s.price <= 0.01:
             suspended_count += 1
             continue
 

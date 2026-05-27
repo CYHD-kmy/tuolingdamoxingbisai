@@ -436,7 +436,13 @@ def run_pipeline(total_capital: float = 500_000.0) -> PipelineState:
     app = _get_graph()
     result = app.invoke(initial_state)
 
-    total_elapsed = sum(result.elapsed.values()) if hasattr(result, "elapsed") else 0
+    # LangGraph 可能返回 dict，统一转回 PipelineState
+    if isinstance(result, dict):
+        from dataclasses import fields
+        field_names = {f.name for f in fields(PipelineState)}
+        result = PipelineState(**{k: v for k, v in result.items() if k in field_names})
+
+    total_elapsed = sum(result.elapsed.values())
     logger.info("===== 流水线完成 (%.1fs) =====", total_elapsed)
     _print_summary(result)
 
@@ -462,10 +468,11 @@ def _build_current_positions(state: PipelineState) -> dict[str, int]:
     return positions
 
 
-def _print_summary(state: PipelineState) -> None:
+def _print_summary(state) -> None:
     """打印流水线摘要"""
-    if state.final_result:
-        decisions = state.final_result.decisions
+    final = getattr(state, "final_result", None)
+    if final:
+        decisions = final.decisions
         if decisions:
             logger.info("最终决策:")
             for d in decisions:

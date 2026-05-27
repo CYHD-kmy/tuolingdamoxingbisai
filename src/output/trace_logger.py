@@ -23,6 +23,7 @@ def build_trace(state: PipelineState, total_elapsed: float) -> dict[str, Any]:
     date_str = datetime.now().strftime("%Y%m%d")
 
     # 候选池
+    _candidates = getattr(state, "candidates", [])
     candidates = [
         {
             "code": c.code, "name": c.name, "score": c.composite,
@@ -31,10 +32,11 @@ def build_trace(state: PipelineState, total_elapsed: float) -> dict[str, Any]:
                          "capital_flow", "northbound", "sentiment", "quality",
                          "risk", "liquidity", "shareholder_conc"]}
         }
-        for c in state.candidates
+        for c in _candidates
     ]
 
     # 研判结论
+    _verdicts = getattr(state, "verdicts", {})
     verdicts = {
         code: {
             "name": v.name,
@@ -45,12 +47,13 @@ def build_trace(state: PipelineState, total_elapsed: float) -> dict[str, Any]:
             "core_reasoning": v.core_reasoning,
             "key_risks": v.key_risks,
         }
-        for code, v in state.verdicts.items()
+        for code, v in _verdicts.items()
     }
 
     # 分析师报告摘要
+    _analyst_reports = getattr(state, "analyst_reports", {})
     analysis: dict[str, dict[str, Any]] = {}
-    for code, reports in state.analyst_reports.items():
+    for code, reports in _analyst_reports.items():
         analysis[code] = {}
         for r in reports:
             analysis[code][r.analyst_type] = {
@@ -77,10 +80,11 @@ def build_trace(state: PipelineState, total_elapsed: float) -> dict[str, Any]:
                 for r in d.rounds
             ],
         }
-        for code, d in state.debates.items()
+        for code, d in getattr(state, "debates", {}).items()
     }
 
     # 风控约束
+    _position_limits = getattr(state, "position_limits", {})
     risk_limits = {
         code: {
             "name": l.name,
@@ -90,20 +94,21 @@ def build_trace(state: PipelineState, total_elapsed: float) -> dict[str, Any]:
             "volatility": l.volatility,
             "risk_flags": l.risk_flags,
         }
-        for code, l in state.position_limits.items()
+        for code, l in _position_limits.items()
     }
 
     # 最终决策
-    decisions = [d.to_dict() for d in (state.final_result.decisions if state.final_result else [])]
+    _final = getattr(state, "final_result", None)
+    decisions = [d.to_dict() for d in (_final.decisions if _final else [])]
 
     return {
         "pipeline_version": "1.1.0",
         "date": date_str,
         "timestamp": datetime.now().isoformat(),
-        "total_capital": state.total_capital,
+        "total_capital": getattr(state, "total_capital", 0),
         "elapsed": {
             "total": round(total_elapsed, 2),
-            "stages": state.elapsed,
+            "stages": getattr(state, "elapsed", {}),
         },
         "screening": {
             "total_candidates": len(candidates),
@@ -114,13 +119,13 @@ def build_trace(state: PipelineState, total_elapsed: float) -> dict[str, Any]:
         "verdicts": verdicts,
         "risk": risk_limits,
         "decisions": decisions,
-        "data_quality": state.data_quality,
-        "errors": state.errors,
+        "data_quality": getattr(state, "data_quality", {}),
+        "errors": getattr(state, "errors", []),
         "portfolio": {
-            "cash_used": state.final_result.cash_used if state.final_result else 0,
-            "cash_remaining": state.final_result.cash_remaining if state.final_result else state.total_capital,
-            "total_positions": state.final_result.total_positions if state.final_result else 0,
-        } if state.final_result else {},
+            "cash_used": _final.cash_used if _final else 0,
+            "cash_remaining": _final.cash_remaining if _final else getattr(state, "total_capital", 0),
+            "total_positions": _final.total_positions if _final else 0,
+        } if _final else {},
     }
 
 

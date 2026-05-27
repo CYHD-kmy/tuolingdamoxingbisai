@@ -21,6 +21,7 @@ AKShare 数据适配器 — 主力免费数据源。
 
 import logging
 import random
+import threading
 import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -207,20 +208,45 @@ class AKShareFetcher:
     _spot_cache: pd.DataFrame | None = None
     _spot_cache_time: float = 0.0
     _SPOT_CACHE_TTL: float = 60.0  # 快照缓存 60 秒
+    _spot_cache_lock: threading.Lock = threading.Lock()
+    _eastmoney_unavailable: bool = False  # 东方财富不可用时快速失败
+
+    @classmethod
+    def _warm_spot_cache(cls):
+        """预热全市场快照缓存 (线程安全), 供批量操作前调用"""
+        with cls._spot_cache_lock:
+            now = time.time()
+            if cls._spot_cache is not None and now - cls._spot_cache_time <= cls._SPOT_CACHE_TTL:
+                return
+            # 最近已尝试过且失败，短时间内不再重试
+            if cls._spot_cache is None and now - cls._spot_cache_time <= cls._SPOT_CACHE_TTL * 2:
+                return
+            try:
+                import akshare as ak
+                cls._spot_cache = ak.stock_zh_a_spot_em()
+                cls._spot_cache_time = now
+                logger.debug("akshare: 预热快照缓存 (%d 条)", len(cls._spot_cache))
+            except Exception:
+                cls._spot_cache_time = now  # 记录失败时间，避免短时间内重复尝试
+                raise
 
     def _sleep(self) -> None:
         time.sleep(random.uniform(1.0, 3.0))
 
     def _retry(self, fn, *args, max_tries: int = 3, **kwargs):
-        """指数退避重试 (首次不等待)"""
+        """指数退避重试 (首次不等待). AttributeError 不重试"""
         last_err = None
         for attempt in range(max_tries):
             try:
                 if attempt > 0:
                     self._sleep()
                 return fn(*args, **kwargs)
+            except AttributeError:
+                raise  # 函数/属性缺失，重试无意义
             except Exception as e:
                 last_err = e
+                if attempt >= max_tries - 1:
+                    raise
                 wait = 2 ** attempt
                 logger.warning(
                     "akshare: %s 第%d次失败 (%.1fs后重试): %s",
@@ -233,11 +259,19 @@ class AKShareFetcher:
 
     def get_daily_data(self, code: str, days: int = 60) -> list[StockDaily]:
         """获取个股日线数据 (含技术指标)"""
-        df = self._retry(self._fetch_daily_from_eastmoney, code, days)
-        return self._to_stock_daily_list(df)
+        if AKShareFetcher._eastmoney_unavailable:
+            return []
+        try:
+            df = self._retry(self._fetch_daily_from_eastmoney, code, days)
+            return self._to_stock_daily_list(df)
+        except Exception:
+            AKShareFetcher._eastmoney_unavailable = True
+            return []
 
     def get_realtime_quote(self, code: str) -> Optional[RealtimeQuote]:
         """获取实时行情"""
+        if AKShareFetcher._eastmoney_unavailable:
+            return None
         try:
             return self._retry(self._fetch_realtime, code)
         except Exception:
@@ -264,10 +298,13 @@ class AKShareFetcher:
 
     def get_fund_flow(self, code: str, days: int = 5) -> list[FundFlow]:
         """获取近期资金流向"""
+        if AKShareFetcher._eastmoney_unavailable:
+            return []
         try:
             return self._retry(self._fetch_fund_flow, code, days)
         except Exception:
-            logger.exception("akshare: 获取资金流向失败 %s", code)
+            AKShareFetcher._eastmoney_unavailable = True
+            logger.debug("akshare: 获取资金流向失败 %s", code)
             return []
 
     def get_market_snapshot(self) -> list[MarketSnapshot]:
@@ -388,16 +425,10 @@ class AKShareFetcher:
 
         em_code = self._eastmoney_code(code)
         try:
-            # 使用缓存的全市场快照，避免每次调用都下载 5000+ 条数据
-            now = time.time()
-            if (AKShareFetcher._spot_cache is None
-                    or now - AKShareFetcher._spot_cache_time > AKShareFetcher._SPOT_CACHE_TTL):
-                AKShareFetcher._spot_cache = ak.stock_zh_a_spot_em()
-                AKShareFetcher._spot_cache_time = now
-                logger.debug("akshare: 刷新全市场快照缓存 (%d 条)", len(AKShareFetcher._spot_cache))
-
+            AKShareFetcher._warm_spot_cache()
             df = AKShareFetcher._spot_cache
-            # 兼容 akshare 不同版本的代码格式 (sh600519 / 600519)
+            if df is None:
+                raise ValueError("快照缓存为空")
             code_digits = self._normalize_code(code)
             mask = df["代码"].str.replace(r"[^0-9]", "", regex=True) == code_digits
             row = df[mask]
@@ -453,19 +484,30 @@ class AKShareFetcher:
         )
 
     def _fetch_stock_info(self, code: str) -> dict:
-        """获取个股基本信息 (含上市日期)"""
+        """获取个股基本信息 (含上市日期)，优先复用快照缓存避免重复 akshare 调用"""
         import akshare as ak
+        import pandas as pd
 
         em_code = self._eastmoney_code(code)
-        df = ak.stock_zh_a_spot_em()
         code_digits = self._normalize_code(code)
+
+        # 优先从全市场快照缓存获取 (线程安全，避免 3000 个线程同时下载)
+        try:
+            AKShareFetcher._warm_spot_cache()
+            df = AKShareFetcher._spot_cache
+            if df is None:
+                return {}
+        except Exception:
+            logger.debug("akshare: stock_zh_a_spot_em 失败 (网络不通)，返回空信息")
+            return {}
+
         mask = df["代码"].str.replace(r"[^0-9]", "", regex=True) == code_digits
         row = df[mask]
         if row.empty:
             return {}
         r = row.iloc[0]
         info = {
-            "code": self._normalize_code(code),
+            "code": code_digits,
             "name": str(r.get("名称", "")),
             "industry": str(r.get("所属行业", "")),
             "pe": float(r.get("市盈率-动态", 0) or 0),
@@ -553,6 +595,7 @@ class AKShareFetcher:
         import json as _json
 
         snapshots: list[MarketSnapshot] = []
+        all_rows: list[dict] = []  # 缓存原始行供 _fetch_stock_info 复用
         # 分批获取: 每页100只, 取30页 = 3000只
         for page in range(1, 31):
             url = (
@@ -574,6 +617,7 @@ class AKShareFetcher:
                 rows = data.get("data", {}).get("diff", [])
                 if not rows:
                     break
+                all_rows.extend(rows)
                 for r in rows:
                     try:
                         snapshots.append(MarketSnapshot(
@@ -594,6 +638,9 @@ class AKShareFetcher:
 
         if not snapshots:
             raise RuntimeError("curl 获取全市场快照为空")
+
+        # 缓存原始行数据供 _fetch_stock_info 复用 (避免重复 akshare 调用)
+        AKShareFetcher._spot_cache_rows = all_rows
         pages_fetched = page + 1 if page < 30 else page
         logger.info("curl: 获取 %d 只股票快照 (%d 页)", len(snapshots), pages_fetched)
         return snapshots
