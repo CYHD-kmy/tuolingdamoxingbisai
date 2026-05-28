@@ -99,7 +99,10 @@ def build_trace(state: PipelineState, total_elapsed: float) -> dict[str, Any]:
 
     # 最终决策
     _final = getattr(state, "final_result", None)
-    decisions = [d.to_dict() for d in (_final.decisions if _final else [])]
+    decisions = [
+        {**d.to_dict(), "entry_price": d.entry_price, "asset_type": d.asset_type}
+        for d in (_final.decisions if _final else [])
+    ]
 
     return {
         "pipeline_version": "1.1.0",

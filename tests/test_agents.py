@@ -89,16 +89,21 @@ def test_final_decision_to_dict():
     assert result == {"symbol": "600519", "symbol_name": "茅台", "volume": 200}
 
 
-def test_final_decision_to_dict_with_entry_price():
-    """entry_price > 0 时 to_dict() 包含入场价"""
+def test_final_decision_to_dict_competition_format():
+    """to_dict() 仅输出赛道标准三字段: symbol/symbol_name/volume"""
+    # entry_price 大於0时也不输出 (比赛格式不含金额字段)
     d = FinalDecision(symbol="600519", symbol_name="茅台", volume=200, entry_price=1680.50)
     result = d.to_dict()
-    assert result == {"symbol": "600519", "symbol_name": "茅台", "volume": 200, "entry_price": 1680.50}
+    assert result == {"symbol": "600519", "symbol_name": "茅台", "volume": 200}
 
-    # entry_price=0 时不输出该字段
+    # entry_price=0 时同理
     d2 = FinalDecision(symbol="000858", symbol_name="五粮液", volume=500, entry_price=0.0)
     result2 = d2.to_dict()
-    assert "entry_price" not in result2
+    assert result2 == {"symbol": "000858", "symbol_name": "五粮液", "volume": 500}
+
+    # entry_price 始终保留在 dataclass 属性上 (内部追踪用)
+    assert d.entry_price == 1680.50
+    assert d2.entry_price == 0.0
 
 
 def test_position_limit_defaults():

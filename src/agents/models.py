@@ -73,10 +73,8 @@ class FinalDecision:
     asset_type: str = "stock"  # "stock" / "etf"
 
     def to_dict(self) -> dict:
-        d = {"symbol": self.symbol, "symbol_name": self.symbol_name, "volume": self.volume}
-        if self.entry_price > 0:
-            d["entry_price"] = self.entry_price
-        return d
+        """返回赛道标准 JSON 格式: symbol / symbol_name / volume"""
+        return {"symbol": self.symbol, "symbol_name": self.symbol_name, "volume": self.volume}
 
 
 @dataclass
