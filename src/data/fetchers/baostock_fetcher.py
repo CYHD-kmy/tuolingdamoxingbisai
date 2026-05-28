@@ -86,7 +86,7 @@ class BaoStockFetcher:
     @staticmethod
     def _bs_code(code: str) -> str:
         """转 BaoStock 格式: sh.600519 / sz.000858"""
-        prefix = "sh" if code.startswith(("6", "9")) else ("bj" if code.startswith(("4", "8")) else "sz")
+        prefix = "sh" if code.startswith(("5", "6", "9")) else ("bj" if code.startswith(("4", "8")) else "sz")
         return f"{prefix}.{code}"
 
     def get_daily_data(self, code: str, days: int = 60) -> list[StockDaily]:

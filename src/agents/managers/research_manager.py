@@ -157,7 +157,7 @@ class ResearchManager:
         """解析研究主管的 JSON 输出"""
         try:
             data = json.loads(extract_json(raw))
-        except (json.JSONDecodeError, ValueError):
+        except (json.JSONDecodeError, ValueError, TypeError, AttributeError):
             logger.warning("ResearchManager: JSON 解析失败，使用保守估计")
             return ResearchVerdict(
                 code=code, name=name, direction="hold",

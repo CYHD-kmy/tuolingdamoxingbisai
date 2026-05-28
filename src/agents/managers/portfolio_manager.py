@@ -264,7 +264,7 @@ class PortfolioManager:
                     entry_price=entry_price,
                 ))
             return result
-        except (json.JSONDecodeError, ValueError, KeyError):
+        except (json.JSONDecodeError, ValueError, KeyError, TypeError, AttributeError):
             logger.warning("PortfolioManager: JSON 解析失败")
             return []
 

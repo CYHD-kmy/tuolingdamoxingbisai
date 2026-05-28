@@ -48,13 +48,22 @@ def extract_json(text: str) -> str:
         except ValueError:
             pass
 
-    # 3. 平衡括号匹配 (避免跨多个 JSON 对象时的交叉污染)
-    json_str = _find_balanced(text, "[", "]")
-    if json_str:
-        return json_str
-    json_str = _find_balanced(text, "{", "}")
-    if json_str:
-        return json_str
+    # 3. 平衡括号匹配 (智能优先级)
+    json_obj = _find_balanced(text, "{", "}")
+    json_arr = _find_balanced(text, "[", "]")
+
+    if json_obj and json_arr:
+        # 如果对象嵌套在数组内 (如 [{...}, {...}])，返回完整数组
+        obj_pos = text.index(json_obj)
+        arr_pos = text.index(json_arr)
+        if obj_pos > arr_pos and obj_pos < arr_pos + len(json_arr):
+            return json_arr
+        # 否则返回对象 (避免 DeepSeek R1 推理中的 [...] 片段干扰)
+        return json_obj
+    if json_obj:
+        return json_obj
+    if json_arr:
+        return json_arr
 
     return text
 

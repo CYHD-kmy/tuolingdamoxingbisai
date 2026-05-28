@@ -45,9 +45,9 @@ def test_filter_suspended():
 
 
 def test_filter_low_turnover():
-    """换手率极低的股票视为停牌"""
+    """停牌股具备价格=0且换手率=0的特征（仅价格=0触发过滤，换手率=0不加判）"""
     snapshots = [
-        _make_snapshot("000001", "僵尸股", turnover=0.0),
+        _make_snapshot("000001", "僵尸股", price=0.0, turnover=0.0),
         _make_snapshot("600519", "贵州茅台"),
     ]
     result = filter_tradable(snapshots)

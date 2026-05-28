@@ -152,6 +152,7 @@ class ETFSpot:
     amount: float
     turnover: float = 0.0
     fund_size: float = 0.0     # 基金规模 (亿)
+    discount: float = 0.0      # 折溢价率 (%)
 
 
 @dataclass
@@ -347,7 +348,7 @@ class AKShareFetcher:
     def _eastmoney_code(code: str) -> str:
         """转为东方财富代码格式 (sh600519 / sz000858)"""
         code = AKShareFetcher._normalize_code(code)
-        prefix = "sh" if code.startswith(("6", "9")) else ("bj" if code.startswith(("4", "8")) else "sz")
+        prefix = "sh" if code.startswith(("5", "6", "9")) else ("bj" if code.startswith(("4", "8")) else "sz")
         return f"{prefix}{code}"
 
     def _fetch_daily_from_eastmoney(self, code: str, days: int) -> pd.DataFrame:
@@ -653,14 +654,14 @@ class AKShareFetcher:
 
         # 首先尝试个股新闻 (keyword 为股票代码时工作)
         try:
-            df = ak.stock_zh_a_news(symbol=keyword)
+            df = ak.stock_news_em(keyword)
             if df is not None and not df.empty:
                 for _, row in df.head(20).iterrows():
                     results.append({
-                        "title": str(row.get("title", row.get("标题", ""))),
-                        "content": str(row.get("content", row.get("内容", "")))[:500],
-                        "time": str(row.get("time", row.get("时间", ""))),
-                        "source": str(row.get("source", row.get("来源", ""))),
+                        "title": str(row.get("新闻标题", row.get("title", row.get("标题", "")))),
+                        "content": str(row.get("新闻内容", row.get("content", row.get("内容", ""))))[:500],
+                        "time": str(row.get("发布时间", row.get("发布日期", row.get("time", row.get("时间", ""))))),
+                        "source": str(row.get("文章来源", row.get("source", row.get("来源", "")))),
                     })
                 if results:
                     return results
@@ -732,14 +733,25 @@ class AKShareFetcher:
         results = []
         for _, r in df.iterrows():
             try:
+                # 基金规模 (元 → 亿)
+                fund_size_raw = r.get("基金规模", 0) or 0
+                fund_size_val = float(fund_size_raw) / 1e8
+                # IOPV 折溢价
+                iopv = float(r.get("IOPV", 0) or 0)
+                price_val = float(r.get("最新价", 0) or 0)
+                discount_val = 0.0
+                if iopv > 0 and price_val > 0:
+                    discount_val = round((price_val / iopv - 1) * 100, 2)
                 results.append(ETFSpot(
                     code=str(r.get("代码", "")),
                     name=str(r.get("名称", "")),
-                    price=float(r.get("最新价", 0) or 0),
+                    price=price_val,
                     pct_chg=float(r.get("涨跌幅", 0) or 0),
                     volume=float(r.get("成交量", 0) or 0),
                     amount=float(r.get("成交额", 0) or 0),
                     turnover=float(r.get("换手率", 0) or 0),
+                    fund_size=fund_size_val,
+                    discount=discount_val,
                 ))
             except (ValueError, KeyError):
                 continue
@@ -747,13 +759,10 @@ class AKShareFetcher:
 
     def get_etf_daily(self, code: str, days: int = 60) -> list[StockDaily]:
         """获取 ETF 日线数据 (复用 StockDaily 结构)"""
-        if AKShareFetcher._eastmoney_unavailable:
-            return []
         try:
             return self._retry(self._fetch_etf_daily, code, days)
         except Exception:
-            AKShareFetcher._eastmoney_unavailable = True
-            logger.debug("akshare: 获取ETF日线失败 %s (已禁用Eastmoney)", code)
+            logger.debug("akshare: 获取ETF日线失败 %s", code)
             return []
 
     def _fetch_etf_daily(self, code: str, days: int) -> list[StockDaily]:
@@ -775,15 +784,15 @@ class AKShareFetcher:
 
     def _fetch_northbound_flow(self, days: int) -> list[NorthboundFlow]:
         import akshare as ak
-        df = ak.stock_hsgt_north_net_flow_in_em()
+        df = ak.stock_hsgt_hist_em(symbol="北向资金")
         results = []
         for _, r in df.tail(days).iterrows():
             try:
                 results.append(NorthboundFlow(
-                    date=str(r.get("date", r.get("日期", "")))[:10],
-                    net_inflow=float(r.get("value", r.get("净流入", 0)) or 0),
-                    sh_inflow=float(r.get("sh", r.get("沪股通", 0)) or 0),
-                    sz_inflow=float(r.get("sz", r.get("深股通", 0)) or 0),
+                    date=str(r.get("日期", r.get("date", "")))[:10],
+                    net_inflow=float(r.get("当日成交净买额", r.get("净流入", 0)) or 0),
+                    sh_inflow=float(r.get("沪股通净买额", r.get("沪股通", 0)) or 0),
+                    sz_inflow=float(r.get("深股通净买额", r.get("深股通", 0)) or 0),
                 ))
             except (ValueError, KeyError):
                 continue
@@ -824,13 +833,14 @@ class AKShareFetcher:
 
     def _fetch_margin_summary(self) -> dict:
         import akshare as ak
+        today_str = datetime.now().strftime("%Y%m%d")
         try:
-            df_sh = ak.stock_margin_sh()
+            df_sh = ak.stock_margin_sse(start_date=today_str, end_date=today_str)
             sh_row = df_sh.iloc[-1] if not df_sh.empty else None
         except Exception:
             sh_row = None
         try:
-            df_sz = ak.stock_margin_sz()
+            df_sz = ak.stock_margin_szse(date=today_str)
             sz_row = df_sz.iloc[-1] if not df_sz.empty else None
         except Exception:
             sz_row = None
@@ -856,7 +866,7 @@ class AKShareFetcher:
         import akshare as ak
         market = "sh" if code.startswith(("6", "9")) else "sz"
         try:
-            fn = ak.stock_margin_detail_sh if market == "sh" else ak.stock_margin_detail_sz
+            fn = ak.stock_margin_detail_sse if market == "sh" else ak.stock_margin_detail_szse
             today_str = datetime.now().strftime("%Y%m%d")
             df = fn(date=today_str)
             if df is None or df.empty:
@@ -925,13 +935,13 @@ class AKShareFetcher:
 
     def _fetch_telegraph(self, limit: int) -> list[dict]:
         import akshare as ak
-        df = ak.stock_telegraph_cls()
+        df = ak.stock_info_global_cls(symbol="全部")
         if df is None or df.empty:
             return []
         return [
-            {"title": str(r.get("title", r.get("标题", ""))),
-             "content": str(r.get("content", r.get("内容", "")))[:500],
-             "time": str(r.get("ctime", r.get("时间", "")))}
+            {"title": str(r.get("标题", r.get("title", ""))),
+             "content": str(r.get("内容", r.get("content", "")))[:500],
+             "time": str(r.get("发布时间", r.get("发布日期", r.get("ctime", r.get("时间", "")))))[:19]}
             for _, r in df.head(limit).iterrows()
         ]
 
@@ -1030,7 +1040,7 @@ class AKShareFetcher:
     def _fetch_shareholder_count(self, code: str) -> list[ShareholderCount]:
         import akshare as ak
         try:
-            df = ak.stock_zh_a_gdhs_em(symbol=self._eastmoney_code(code))
+            df = ak.stock_zh_a_gdhs_detail_em(symbol=self._eastmoney_code(code))
             if df is None or df.empty:
                 return []
             results = []
@@ -1058,22 +1068,9 @@ class AKShareFetcher:
             return []
 
     def _fetch_institutional_visits(self, days: int) -> list[InstitutionalVisit]:
-        import akshare as ak
-        try:
-            df = ak.stock_institute_visit_em()
-            if df is None or df.empty:
-                return []
-            return [
-                InstitutionalVisit(
-                    date=str(r.get("日期", ""))[:10],
-                    institution=str(r.get("机构名称", r.get("调研机构", ""))),
-                    visitors=int(r.get("调研人员", 0) or 0),
-                    summary=str(r.get("调研摘要", ""))[:300],
-                )
-                for _, r in df.head(30).iterrows()
-            ]
-        except Exception:
-            return []
+        """获取近期机构调研记录 (akshare API 已弃用，暂无替代)"""
+        logger.debug("akshare: stock_institute_visit_em 已弃用，跳过机构调研")
+        return []
 
     # ── 市场异动 ──────────────────────────────
 
@@ -1086,23 +1083,9 @@ class AKShareFetcher:
             return []
 
     def _fetch_market_activity(self) -> list[MarketActivity]:
-        import akshare as ak
-        try:
-            df = ak.stock_market_activity_em()
-            if df is None or df.empty:
-                return []
-            return [
-                MarketActivity(
-                    time=str(r.get("时间", "")),
-                    code=str(r.get("代码", "")),
-                    name=str(r.get("名称", "")),
-                    activity_type=str(r.get("异动类型", r.get("异动", ""))),
-                    description=str(r.get("异动描述", r.get("描述", ""))),
-                )
-                for _, r in df.head(30).iterrows()
-            ]
-        except Exception:
-            return []
+        """获取盘口异动 (akshare API 已弃用，暂无替代)"""
+        logger.debug("akshare: stock_market_activity_em 已弃用，跳过市场异动")
+        return []
 
     # ── 大宗交易 ──────────────────────────────
 

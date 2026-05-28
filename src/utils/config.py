@@ -11,6 +11,25 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
+from dotenv import load_dotenv
+
+# 自动加载项目根目录 .env 文件
+load_dotenv(Path(__file__).resolve().parent.parent.parent / ".env")
+
+# 代理绕过: macOS 系统代理 (Clash/V2Ray/Surge) 可能拦截/破坏金融数据源响应,
+# 通过清除代理环境变量 + monkey-patch 双重确保直连
+for _proxy_var in ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy",
+                    "ALL_PROXY", "all_proxy"):
+    os.environ.pop(_proxy_var, None)
+os.environ["NO_PROXY"] = "*"  # requests/urllib3 读取此变量决定是否走代理
+import urllib.request as _urllib_request
+_urllib_request.getproxies = lambda: {}
+
+# requests 库在 macOS 上通过 _scproxy 直接读系统代理，不依赖环境变量,
+# 必须显式禁用 trust_env 才能绕过
+import requests as _requests
+_requests.Session.trust_env = False
+
 def _project_root() -> Path:
     """惰性计算项目根目录 (避免 import-time 副作用)."""
     return Path(__file__).resolve().parent.parent.parent

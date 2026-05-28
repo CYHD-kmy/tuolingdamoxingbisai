@@ -60,7 +60,7 @@ class TushareFetcher:
     @staticmethod
     def _ts_code(code: str) -> str:
         """标准化代码 → Tushare ts_code 格式 (600519.SH / 000858.SZ / 430047.BJ)"""
-        if code.startswith("6"):
+        if code.startswith(("5", "6")):
             return f"{code}.SH"
         if code.startswith(("4", "8")):
             return f"{code}.BJ"
