@@ -48,61 +48,53 @@ cp .env.example .env
 # 编辑 .env，填入 LLM_API_KEY=sk-xxx
 
 # 3. 运行 (演示模式，无需网络和 API)
-python -m src.main --demo
+python manage.py run-demo
 
-# 4. 运行 (正常模式)
-python -m src.main
+# 4. 运行 (正常模式，需要 API Key)
+python manage.py run
 
 # 5. 高级功能
-python -m src.main --backtest 20260501 20260526                  # 历史回测
-python -m src.main --benchmark 000300                             # 回测基准指数 (可选，默认沪深300)
-python -m src.main --strategy momentum,quality                    # 多策略竞争 (5种: momentum/mean_reversion/quality/sentiment/all)
-python -m src.main --rl-train --rl-episodes 200                   # 强化学习训练
-python -m src.main --rl-model results/rl_model.json               # 加载RL模型推断
-
-# 6. Transformer 时序编码器 (Phase 4)
-python -m src.main --transformer-train --transformer-epochs 100   # 训练 Transformer
-export TRANSFORMER_ENABLED=true                                    # 启用 Transformer
-python -m src.main --demo                                          # 推理 (融合Transformer评分)
+python manage.py schedule          # 启动定时调度器 (后台运行，每日自动)
+python manage.py run-scheduled     # 仅交易日执行一次，非交易日跳过
+python manage.py schedule-stop     # 停止调度器
+python manage.py schedule-demo     # 演示模式调度器 (无需 API)
 ```
 
-### 启动 Web 看板
+### 老师快速上手（三平台通用）
+
+> **详细图文指引：[运行指南.md](运行指南.md)**
+
+拿到源代码后，三步启动：
 
 ```bash
-# 方式一: 跨平台管理脚本 (推荐)
-python manage.py start       # 启动服务
-python manage.py status      # 查看状态
-python manage.py stop        # 停止服务
+# 第一步: 装依赖 (仅一次)
+pip install -r requirements.txt
 
-# 方式二: Shell 管理脚本 (macOS/Linux)
-./manage.sh start       # 启动服务
-./manage.sh status      # 查看状态
-./manage.sh stop        # 停止服务
+# 第二步: 交互式配置 (自动提示，填 API Key)
+python manage.py setup
 
-# 方式三: 直接启动
-python -m src.api.server
-
-# 访问: http://localhost:8000
-#   /home        首页
-#   /dashboard   实时看板
-#   /history     历史记录
-#   /report      日报
+# 第三步: 立即运行
+python manage.py run
 ```
 
-### 开机自启
+**如果老师没有 LLM API Key**，可以用演示模式验证：
 
 ```bash
-# macOS (launchd)
-./manage.sh install     # 安装 launchd 服务
-./manage.sh uninstall   # 卸载
+python manage.py run-demo             # 演示模式 (使用模拟数据)
 
-# Linux (systemd)
-python manage.py install     # 安装 systemd 用户服务
-python manage.py uninstall   # 卸载
-
-# Windows
-python manage.py install     # 显示任务计划程序配置指引
+# 或查看已有的结果文件
+python manage.py start                # 启动 Web 看板
+open http://localhost:8000            # 浏览器查看历史决策 (macOS)
+# Linux: xdg-open http://localhost:8000
+# Windows: start http://localhost:8000
 ```
+
+| 命令 | macOS | Linux | Windows |
+|------|-------|-------|---------|
+| `python manage.py run` | 一键执行流水线 | 同左 | 同左 |
+| `python manage.py schedule` | 后台自动运行 | 同左 | 同左 |
+| `python manage.py start` | 启动 Web 看板 | 同左 | 同左 |
+| `python manage.py install` | launchd 开机自启 | systemd 开机自启 | 显示手动配置指引 |
 
 ## 环境变量
 
