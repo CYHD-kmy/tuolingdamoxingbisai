@@ -835,7 +835,18 @@ COMMANDS = {
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="智投未来 服务管理")
-    parser.add_argument("command", choices=list(COMMANDS), help="操作命令")
-    args = parser.parse_args()
+    parser.add_argument("command", nargs="?", choices=list(COMMANDS), help="操作命令")
+    try:
+        args = parser.parse_args()
+    except SystemExit as e:
+        if e.code != 0:
+            args = None
+        else:
+            raise
 
-    COMMANDS[args.command]()
+    if args is None or args.command is None:
+        print("请指定一个命令，例如: python manage.py intro")
+        print()
+        parser.print_help()
+    else:
+        COMMANDS[args.command]()
