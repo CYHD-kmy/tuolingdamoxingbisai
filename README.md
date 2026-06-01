@@ -19,7 +19,7 @@
 调度层 (Scheduler / CLI)
   │
   ├─ 数据层 (Data Layer)
-  │   AKShare → Tushare → BaoStock  三级降级 (Tushare Token可用时自动提升为优先)
+  │   Tushare → BaoStock → AKShare  三层降级 (Tushare 为主力，AKShare 永久降为兜底)
   │   UnifiedDataInterface  统一数据接口 + 缓存
   │
   ├─ 分析层 (Analysis Layer)
@@ -112,7 +112,7 @@ open http://localhost:8000            # 浏览器查看历史决策 (macOS)
 
 | 模块 | 路径 | 说明 |
 |------|------|------|
-| 数据层 | `src/data/` | 多源降级编排 (AKShare → Tushare → BaoStock) + 缓存 + 数据质量标记 (live/cached/fallback/stale) |
+| 数据层 | `src/data/` | 多源降级编排 (Tushare → BaoStock → AKShare) + 缓存 + 数据质量标记 (live/cached/fallback/stale) |
 | 海选筛选 | `src/screening/` | ST/停牌/新股过滤 + 10因子加权打分 + ETF筛选 (已接入主流水线，支持股/ETF并行+混合组合) |
 | 分析Agent | `src/agents/` | 技术面/基本面/资金面/消息面 四维分析 + ETF分析师 + 多空辩论 + 管理团队 |
 | 工作流 | `src/graph/` | LangGraph 状态管理 + 流水线编排 |
@@ -225,7 +225,7 @@ Top 20 候选池中每只股票由 4 个分析师**并行**分析（各自使用
 
 | 风险 | 影响 | 应对措施 |
 |------|------|----------|
-| AKShare 接口不稳定 | 数据缺失 | 三层降级 (AKShare→Tushare→BaoStock) + 缓存兜底 |
+| 数据源接口不稳定 | 数据缺失 | 三层降级 (Tushare→BaoStock→AKShare) + 缓存兜底 + dataclass 序列化 |
 | LLM 调用成本过高 | 预算超支 | 海选筛选减少调用量 + quick/deep 分层 |
 | 市场极端波动 | 大幅回撤 | 日内5%熔断 + 单票仓位上限 + 保留现金 |
 | 过拟合历史数据 | 实盘表现差 | 辩论机制引入对抗观点 + 多分析师交叉验证 |
@@ -299,11 +299,11 @@ zhitou-future/
 │   │
 │   ├── data/                         # 数据层
 │   │   ├── interface.py              #   统一数据接口
-│   │   ├── cache.py                  #   数据缓存
+│   │   ├── cache.py                  #   TTL 缓存 + 磁盘持久化 (dataclass 序列化)
 │   │   └── fetchers/                 #   数据源适配器
-│   │       ├── akshare_fetcher.py    #     AKShare (主力，免费)
-│   │       ├── tushare_fetcher.py    #     Tushare (增强，需Token)
-│   │       └── baostock_fetcher.py   #     BaoStock (兜底，免费)
+│   │       ├── akshare_fetcher.py    #     AKShare (兜底，免费，已永久降级)
+│   │       ├── tushare_fetcher.py    #     Tushare (主力，需Token)
+│   │       └── baostock_fetcher.py   #     BaoStock (备用，免费)
 │   │
 │   ├── agents/                       # Agent 层
 │   │   ├── base.py                   #   Agent 基类
