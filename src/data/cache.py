@@ -7,6 +7,7 @@
 - 磁盘持久化保证重启后可恢复最近缓存
 """
 
+import dataclasses
 import json
 import logging
 import time
@@ -18,6 +19,32 @@ from typing import Any, Optional
 from ..utils.config import get_config
 
 logger = logging.getLogger(__name__)
+
+# 延迟注册的数据类类型映射 (用于缓存反序列化时重建对象)
+_TYPE_MAP: dict[str, type] = {}
+_TYPE_REGISTERED = False
+
+
+def _register_types() -> None:
+    """延迟注册已知的 dataclass 类型 (避免循环导入)."""
+    global _TYPE_REGISTERED
+    if _TYPE_REGISTERED:
+        return
+    try:
+        from .fetchers.akshare_fetcher import (  # noqa: F811
+            StockDaily, RealtimeQuote, FundFlow, MarketSnapshot,
+            NorthboundFlow, MarginData, FinancialIndicator, ETFSpot,
+            UnlockShares, ShareholderCount, InstitutionalVisit, MarketActivity,
+        )
+        for cls in [
+            StockDaily, RealtimeQuote, FundFlow, MarketSnapshot,
+            NorthboundFlow, MarginData, FinancialIndicator, ETFSpot,
+            UnlockShares, ShareholderCount, InstitutionalVisit, MarketActivity,
+        ]:
+            _TYPE_MAP[cls.__name__] = cls
+    except ImportError:
+        pass
+    _TYPE_REGISTERED = True
 
 
 @dataclass
@@ -39,6 +66,31 @@ class DataCache:
 
     # ── 磁盘持久化 ──────────────────────────
 
+    @staticmethod
+    def _to_serializable(data: Any) -> Any:
+        """将数据转为可 JSON 序列化的格式 (dataclass -> dict)."""
+        if dataclasses.is_dataclass(data) and not isinstance(data, type):
+            return {
+                "__type__": type(data).__name__,
+                "fields": dataclasses.asdict(data),
+            }
+        if isinstance(data, list):
+            return [DataCache._to_serializable(item) for item in data]
+        return data
+
+    @staticmethod
+    def _from_serializable(data: Any) -> Any:
+        """从序列化格式恢复 dataclass 对象."""
+        _register_types()
+        if isinstance(data, dict) and "__type__" in data:
+            cls = _TYPE_MAP.get(data["__type__"])
+            if cls is not None:
+                return cls(**data["fields"])
+            return data  # 类型未知，保持 dict
+        if isinstance(data, list):
+            return [DataCache._from_serializable(item) for item in data]
+        return data
+
     def _load_from_disk(self) -> None:
         """从磁盘恢复缓存"""
         try:
@@ -52,7 +104,7 @@ class DataCache:
                     if now - entry["created_at"] > entry["ttl"]:
                         continue
                     self._store[key] = CacheEntry(
-                        data=entry["data"],
+                        data=self._from_serializable(entry["data"]),
                         created_at=entry["created_at"],
                         ttl=entry["ttl"],
                     )
@@ -64,19 +116,19 @@ class DataCache:
             self._store.clear()
 
     def _save_to_disk(self) -> None:
-        """持久化到磁盘 (全程持锁，防止并发写入)"""
+        """持久化到磁盘 (全程持锁，防止并发写入). dataclass 对象自动转为 dict."""
         try:
             self._persist_path.parent.mkdir(parents=True, exist_ok=True)
             with self._lock:
                 payload = {}
                 for key, entry in self._store.items():
                     payload[key] = {
-                        "data": entry.data,
+                        "data": self._to_serializable(entry.data),
                         "created_at": entry.created_at,
                         "ttl": entry.ttl,
                     }
                 with open(self._persist_path, "w", encoding="utf-8") as f:
-                    json.dump(payload, f, ensure_ascii=False, default=str)
+                    json.dump(payload, f, ensure_ascii=False)
         except Exception:
             logger.debug("缓存: 磁盘保存失败", exc_info=True)
 

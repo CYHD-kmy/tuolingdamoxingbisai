@@ -234,8 +234,8 @@ class AKShareFetcher:
     def _sleep(self) -> None:
         time.sleep(random.uniform(1.0, 3.0))
 
-    def _retry(self, fn, *args, max_tries: int = 3, **kwargs):
-        """指数退避重试 (首次不等待). AttributeError 不重试"""
+    def _retry(self, fn, *args, max_tries: int = 1, **kwargs):
+        """单次尝试 (已降级为兜底数据源, 失败即返回). AttributeError 不重试"""
         last_err = None
         for attempt in range(max_tries):
             try:
@@ -926,12 +926,8 @@ class AKShareFetcher:
     # ── 财联社电报 ───────────────────────────
 
     def get_telegraph(self, limit: int = 30) -> list[dict]:
-        """获取财联社电报 (实时快讯)"""
-        try:
-            return self._retry(self._fetch_telegraph, limit)
-        except Exception:
-            logger.exception("akshare: 获取电报失败")
-            return []
+        """获取财联社电报 (akshare API 已废弃 404, 不再调用)"""
+        return []
 
     def _fetch_telegraph(self, limit: int) -> list[dict]:
         import akshare as ak
@@ -1060,12 +1056,8 @@ class AKShareFetcher:
     # ── 机构调研 ──────────────────────────────
 
     def get_institutional_visits(self, days: int = 30) -> list[InstitutionalVisit]:
-        """获取近期机构调研记录"""
-        try:
-            return self._retry(self._fetch_institutional_visits, days)
-        except Exception:
-            logger.exception("akshare: 获取机构调研失败")
-            return []
+        """获取近期机构调研记录 (akshare API 已废弃, 不再调用)"""
+        return []
 
     def _fetch_institutional_visits(self, days: int) -> list[InstitutionalVisit]:
         """获取近期机构调研记录 (akshare API 已弃用，暂无替代)"""
@@ -1075,12 +1067,8 @@ class AKShareFetcher:
     # ── 市场异动 ──────────────────────────────
 
     def get_market_activity(self) -> list[MarketActivity]:
-        """获取盘口异动 (大单买入/卖出、涨跌速异常等)"""
-        try:
-            return self._retry(self._fetch_market_activity)
-        except Exception:
-            logger.exception("akshare: 获取市场异动失败")
-            return []
+        """获取盘口异动 (akshare API 已废弃, 不再调用)"""
+        return []
 
     def _fetch_market_activity(self) -> list[MarketActivity]:
         """获取盘口异动 (akshare API 已弃用，暂无替代)"""

@@ -49,7 +49,7 @@ class Config:
 
     # 数据源优先级: 0=优先, 值越大越靠后
     # 当 TUSHARE_TOKEN 可用时，Tushare 自动升到最高优先级
-    akshare_priority: int = 1
+    akshare_priority: int = 999  # 永久降级为兜底
     tushare_priority: int = 0
     baostock_priority: int = 3
 

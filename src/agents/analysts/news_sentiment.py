@@ -84,9 +84,9 @@ class NewsSentimentAnalyst(BaseAnalyst):
         news = self._data.get_news(code, days=3)
         quote = self._data.get_realtime_quote(code)
         research_reports = self._data.get_research_reports(code, days=30)
-        telegraph = self._data.get_telegraph(limit=20)
-        visits = self._data.get_institutional_visits(days=30)
-        market_activity = self._data.get_market_activity()
+        telegraph = []             # 数据源 API 已废弃
+        visits = []                # 数据源 API 已废弃
+        market_activity = []       # 数据源 API 已废弃
 
         lines = []
 
