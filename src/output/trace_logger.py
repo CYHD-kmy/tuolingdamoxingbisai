@@ -109,6 +109,8 @@ def build_trace(state: PipelineState, total_elapsed: float) -> dict[str, Any]:
         "date": date_str,
         "timestamp": datetime.now().isoformat(),
         "total_capital": getattr(state, "total_capital", 0),
+        "total_equity": 0.0,   # 由 main.py 回写覆盖为实际权益
+        "total_return": 0.0,   # 由 main.py 回写覆盖为实际收益率
         "elapsed": {
             "total": round(total_elapsed, 2),
             "stages": getattr(state, "elapsed", {}),

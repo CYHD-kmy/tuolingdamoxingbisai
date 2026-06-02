@@ -14,9 +14,10 @@ FastAPI 看板服务 — 多页面常驻网站。
     /history    历史记录 (所有运行记录)
     /report     日报 (Markdown 渲染)
 
-API (9 个端点):
-    /api/status /api/decisions /api/candidates /api/analysis
-    /api/risk /api/report /api/history /api/trace
+API (10 个端点):
+    /api/health /api/holdings /api/status /api/decisions
+    /api/candidates /api/analysis /api/risk /api/report
+    /api/history /api/trace
 """
 
 from __future__ import annotations
@@ -94,11 +95,12 @@ def _serve_html(filename: str) -> HTMLResponse:
 # ── trace 工具函数 ──────────────────────────────
 
 def _latest_trace() -> dict[str, Any] | None:
-    """加载最新的 trace JSON 文件"""
+    """加载最新的 trace JSON 文件 (跳过 _vN 版本备份)"""
     if not os.path.isdir(RESULTS_DIR):
         return None
     files = sorted(
-        [f for f in os.listdir(RESULTS_DIR) if f.startswith("trace_") and f.endswith(".json")],
+        [f for f in os.listdir(RESULTS_DIR)
+         if f.startswith("trace_") and f.endswith(".json") and "_v" not in f],
         reverse=True,
     )
     if not files:
@@ -112,7 +114,8 @@ def _list_traces() -> list[dict[str, str]]:
     if not os.path.isdir(RESULTS_DIR):
         return []
     files = sorted(
-        [f for f in os.listdir(RESULTS_DIR) if f.startswith("trace_") and f.endswith(".json")],
+        [f for f in os.listdir(RESULTS_DIR)
+         if f.startswith("trace_") and f.endswith(".json") and "_v" not in f],
         reverse=True,
     )
     result = []

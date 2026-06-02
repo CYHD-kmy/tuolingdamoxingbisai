@@ -211,7 +211,7 @@ class ScreeningScorer:
     def _score_trend(daily: list[StockDaily]) -> float:
         """
         趋势因子: 均线多头排列程度。
-        - MA5 > MA10 > MA20 → 满分
+        - MA5 > MA10 > MA20 > MA60 → 满分
         - 部分满足 → 按满足条数给分
         """
         if len(daily) < 20:
@@ -219,13 +219,15 @@ class ScreeningScorer:
         latest = daily[-1]
         score = 50.0
         if latest.ma5 > latest.ma10:
-            score += 15
+            score += 12
         if latest.ma10 > latest.ma20:
-            score += 15
+            score += 12
+        if latest.ma20 > latest.ma60:
+            score += 10
         if latest.close > latest.ma5:
-            score += 10
+            score += 8
         if latest.close > latest.ma20:
-            score += 10
+            score += 8
         return min(score, 100.0)
 
     @staticmethod
