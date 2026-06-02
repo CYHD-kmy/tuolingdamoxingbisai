@@ -533,7 +533,7 @@ class PortfolioManager:
         sell_cash = sum(d.volume * get_latest_price(d.symbol, daily_data) for d in sell_decisions)
 
         logger.info(
-            "PortfolioManager(Alloc): %d 笔决策 (目标%+d买%+d卖), 买¥%.0f 卖¥%.0f",
+            "PortfolioManager(Alloc): %d 笔决策 (目标%d, 买%d卖%d), 买¥%.0f 卖¥%.0f",
             len(decisions), len(allocations) - len(decisions), len(buy_decisions), len(sell_decisions),
             buy_cash, sell_cash,
         )
