@@ -458,17 +458,12 @@ def run_portfolio(state: PipelineState) -> dict[str, Any]:
     deep_llm = get_deep_llm()
     portfolio_mgr = PortfolioManager(deep_llm)
 
-    # 计算实际可用资金
+    # 使用实际可用现金 (由 main.py 从 tracker 加载, 跨日后不再是 50 万)
     current_positions = _build_current_positions(state)
-    positions_value = 0.0
-    for code, shares in current_positions.items():
-        records = state.daily_data.get(code, [])
-        if records:
-            positions_value += shares * records[-1].close
-    cash_available = max(0.0, state.total_capital - positions_value)
+    cash_available = max(0.0, state.available_cash)
 
-    # ETF 专用资金 = total_capital * etf_max_allocation
-    etf_budget = state.total_capital * cfg.etf_max_allocation if has_etf else 0.0
+    # ETF 专用资金比例 (基于实际可用现金)
+    etf_budget = cash_available * cfg.etf_max_allocation if has_etf else 0.0
     stock_budget = cash_available - etf_budget
 
     all_decisions: list = []
@@ -638,7 +633,11 @@ def _get_graph():
 
 # ── 流水线入口 ─────────────────────────────────
 
-def run_pipeline(total_capital: float = 500_000.0) -> PipelineState:
+def run_pipeline(
+    total_capital: float = 500_000.0,
+    available_cash: float = 500_000.0,
+    current_holdings: dict[str, int] | None = None,
+) -> PipelineState:
     """
     执行完整的日内投资决策流水线。
 
@@ -646,9 +645,18 @@ def run_pipeline(total_capital: float = 500_000.0) -> PipelineState:
       screening → analysis → risk → portfolio → END
                           ↑ 无候选/无研判/无仓位时提前终止
 
+    参数:
+        total_capital: 初始总资金 (用于报告展示)
+        available_cash: 当前实际可用现金 (跨日后可能 < total_capital)
+        current_holdings: 当前持仓 {code: shares}
+
     返回: 包含所有阶段结果的 PipelineState
     """
-    initial_state = PipelineState(total_capital=total_capital)
+    initial_state = PipelineState(
+        total_capital=total_capital,
+        available_cash=available_cash,
+        current_holdings=current_holdings or {},
+    )
     app = _get_graph()
     result = app.invoke(initial_state)
 
@@ -668,7 +676,11 @@ def run_pipeline(total_capital: float = 500_000.0) -> PipelineState:
 # ── 辅助 ──────────────────────────────────────
 
 def _build_current_positions(state: PipelineState) -> dict[str, int]:
-    """加载当前持仓: 优先从上一交易日 trace 文件读取，否则返回空"""
+    """加载当前持仓: 优先使用 state.current_holdings (由 main.py 传入), 否则从文件读取"""
+    if state.current_holdings:
+        logger.info("已加载持仓 (state): %d 只", len(state.current_holdings))
+        return state.current_holdings
+
     from ..agents.portfolio_tracker import PortfolioTracker
     from ..utils.config import get_config
 
@@ -680,7 +692,7 @@ def _build_current_positions(state: PipelineState) -> dict[str, int]:
     tracker.load()
     positions = tracker.current_positions_dict()
     if positions:
-        logger.info("已加载持仓: %d 只, 现金 %.0f", len(positions), tracker.cash)
+        logger.info("已加载持仓 (文件): %d 只, 现金 %.0f", len(positions), tracker.cash)
     return positions
 
 

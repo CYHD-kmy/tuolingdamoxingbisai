@@ -79,14 +79,36 @@ def main(demo: bool = False) -> None:
 
         logger.info("===== 智投未来 启动 =====")
         logger.info("日期: %s", datetime.now().strftime("%Y-%m-%d"))
-        logger.info("总资金: ¥%.0f", config.initial_capital)
+        logger.info("初始资金: ¥%.0f", config.initial_capital)
         logger.info("Quick LLM: %s", config.llm_quick)
         logger.info("Deep LLM:  %s", config.llm_deep)
         logger.info("Tushare: %s", "可用" if config.tushare_available else "未配置")
         logger.info("")
 
+        # ── 跨日持仓加载 (在管道运行前) ──
+        from src.agents.portfolio_tracker import PortfolioTracker
+
+        tracker = PortfolioTracker(
+            total_capital=config.initial_capital,
+            results_dir=config.results_dir,
+        )
+        tracker.load()
+        hold_cash = tracker.cash
+        hold_positions = tracker.current_positions_dict()
+
+        if hold_positions:
+            logger.info("已加载持仓: %d 只, 可用现金 ¥%.0f, 持仓市值 ¥%.0f",
+                        len(hold_positions), hold_cash, tracker.total_market_value())
+        else:
+            logger.info("无历史持仓，初始资金 ¥%.0f", hold_cash)
+        logger.info("")
+
         try:
-            state = run_pipeline(total_capital=config.initial_capital)
+            state = run_pipeline(
+                total_capital=config.initial_capital,
+                available_cash=hold_cash,
+                current_holdings=hold_positions,
+            )
         except KeyboardInterrupt:
             logger.warning("用户中断")
             sys.exit(0)
@@ -109,12 +131,14 @@ def main(demo: bool = False) -> None:
     errors = getattr(state, "errors", [])
     elapsed = getattr(state, "elapsed", {})
 
+    # 使用实际可用现金 (跨日后不再是 50 万)
+    actual_cash = tracker.cash if not demo else config.initial_capital
     if final_result and final_result.decisions:
         validated = validate_decisions(
             final_result.decisions,
             position_limits,
             daily_data,
-            cash_available=config.initial_capital,
+            cash_available=actual_cash,
             min_cash_reserve=config.min_cash_reserve,
             total_capital=config.initial_capital,
             verdicts=verdicts,
@@ -155,10 +179,7 @@ def main(demo: bool = False) -> None:
 
         # 持久化持仓 (仅非 demo 模式; demo 模式每次独立运行不跨日累加)
         if not demo:
-            from src.agents.portfolio_tracker import PortfolioTracker
-
-            tracker = PortfolioTracker(total_capital=config.initial_capital, results_dir=config.results_dir)
-            tracker.load()
+            # 复用已加载的 tracker (含历史持仓 + 现金), 应用当日决策
             _final = getattr(state, "final_result", None)
             _daily = getattr(state, "daily_data", {})
             tracker.apply_decisions(
@@ -168,9 +189,11 @@ def main(demo: bool = False) -> None:
             tracker.update_prices(_daily)
             tracker.record_daily()
             tracker.save()
-            logger.info("持仓已保存: %.0f%% 仓位, 累计盈亏 ¥%.0f",
-                        tracker.total_market_value() / config.initial_capital * 100,
-                        tracker.cumulative_pnl)
+            total_equity = tracker.total_equity()
+            total_return = tracker.total_return()
+            logger.info("持仓已保存: %.0f%% 仓位, 权益 ¥%.0f, 累计收益 %+.2f%%",
+                        tracker.total_market_value() / total_equity * 100 if total_equity > 0 else 0,
+                        total_equity, total_return)
 
             report_md = generate_daily_report(state, tracker)
             date_str = datetime.now().strftime("%Y%m%d")

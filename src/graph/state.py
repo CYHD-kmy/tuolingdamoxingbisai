@@ -28,6 +28,8 @@ class PipelineState:
     # ── 配置 ──────────────────────────────────
     date: str = ""
     total_capital: float = 500_000.0
+    available_cash: float = 500_000.0       # 实际可用现金 (跨日后可能 < total_capital)
+    current_holdings: dict[str, int] = field(default_factory=dict)  # {code: shares} 当前持仓
 
     # ── 阶段 1: 海选筛选 ─────────────────────
     candidates: list[FactorScore] = field(default_factory=list)
