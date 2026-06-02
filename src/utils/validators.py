@@ -165,7 +165,20 @@ def validate_and_clip(
             logger.warning("validators: %s 无有效价格，跳过", code)
             continue
 
-        # 4. 不超过风控上限
+        # 4. 区分买卖方向: 卖出不消耗现金, 不需要预算检查
+        direction = getattr(d, "direction", None) or "buy"
+        if direction == "sell":
+            # 卖出只需验证: 不做风控上限裁剪 (那是买入时的约束)
+            if hasattr(d, "volume"):
+                d.volume = volume
+            else:
+                d["volume"] = volume
+            valid.append(d)
+            continue
+
+        # --- 买入决策继续走原有逻辑 ---
+
+        # 5. 不超过风控上限
         limit = limits.get(code)
         if limit is not None:
             max_shares = limit.max_shares if hasattr(limit, "max_shares") else limit.get("max_shares", 0)
@@ -173,7 +186,7 @@ def validate_and_clip(
                 logger.info("validators: %s 裁剪 %d→%d (风控上限)", code, volume, max_shares)
                 volume = max_shares
 
-        # 5. 预算检查
+        # 6. 预算检查
         cost = volume * price
         remaining = cash_available - min_cash - total_cost
 
@@ -199,8 +212,10 @@ def validate_and_clip(
             total_cost += cost
             valid.append(d)
 
+    buy_count = sum(1 for d in valid if (getattr(d, "direction", None) or "buy") == "buy")
+    sell_count = sum(1 for d in valid if (getattr(d, "direction", None) or "buy") == "sell")
     logger.info(
-        "validators: 校验完成, %d→%d 笔有效决策, 总成本 ¥%.0f",
-        len(decisions), len(valid), total_cost,
+        "validators: 校验完成, %d→%d 笔 (买%d卖%d), 买入总成本 ¥%.0f",
+        len(decisions), len(valid), buy_count, sell_count, total_cost,
     )
     return valid

@@ -300,51 +300,83 @@ def fallback_portfolio(
     daily_data: dict[str, list],
     cash_available: float,
     total_capital: float = 500_000.0,
+    portfolio_context: dict | None = None,
+    market_regime: str = "neutral",
 ) -> PortfolioResult:
-    """简单规则: 买入置信度最高的 buy 标的，在风控约束内分配"""
+    """简单规则: 买入置信度最高的 buy 标的，在风控约束内分配。同时检查持仓是否需要卖出。"""
     from ..utils.validators import get_latest_price
 
+    decisions: list[FinalDecision] = []
+    sell_proceeds = 0.0
+
+    # 1. 检查持仓是否需要强制卖出 (持有太久且亏损)
+    if portfolio_context:
+        for pos in portfolio_context.get("positions", []):
+            if pos.get("shares", 0) <= 0:
+                continue
+            price = get_latest_price(pos["code"], daily_data)
+            if price <= 0:
+                continue
+            # 持有 > 20 天且浮亏 > 5%: 强制清仓
+            if pos.get("holding_days", 0) > 20 and pos.get("pnl_pct", 0) < -5:
+                decisions.append(FinalDecision(
+                    symbol=pos["code"], symbol_name=pos["name"],
+                    volume=pos["shares"], entry_price=price,
+                    direction="sell",
+                ))
+                sell_proceeds += pos["shares"] * price
+                logger.info(
+                    "Fallback: 强制卖出 %s (%s), 持有%d天, 浮亏%.1f%%",
+                    pos["code"], pos["name"], pos["holding_days"], pos["pnl_pct"],
+                )
+            # 止损触发: 强制清仓
+            elif pos.get("stop_triggered"):
+                decisions.append(FinalDecision(
+                    symbol=pos["code"], symbol_name=pos["name"],
+                    volume=pos["shares"], entry_price=price,
+                    direction="sell",
+                ))
+                sell_proceeds += pos["shares"] * price
+
+    # 2. 筛选买入候选
     buy_candidates = [
         v for v in verdicts
         if v.direction == "buy" and v.code in limits and limits[v.code].max_shares > 0
     ]
-    if not buy_candidates:
-        return PortfolioResult(decisions=[])
+    if buy_candidates:
+        buy_candidates.sort(key=lambda x: x.confidence, reverse=True)
+        remaining = (cash_available + sell_proceeds) * 0.90
+        min_cash = total_capital * 0.10
 
-    buy_candidates.sort(key=lambda x: x.confidence, reverse=True)
-    decisions = []
-    remaining = cash_available * 0.90  # 保留 10% 现金
-    min_cash = total_capital * 0.10
+        for v in buy_candidates[:5]:
+            if remaining <= min_cash:
+                break
+            limit = limits[v.code]
+            price = get_latest_price(v.code, daily_data)
+            if price <= 0:
+                continue
+            max_shares = min(limit.max_shares, int(remaining * 0.3 / price / 100) * 100)
+            if max_shares < 100:
+                continue
+            cost = max_shares * price
+            remaining -= cost
+            decisions.append(FinalDecision(
+                symbol=v.code, symbol_name=v.name,
+                volume=max_shares, entry_price=price,
+                direction="buy",
+            ))
 
-    for v in buy_candidates[:5]:  # 最多 5 只
-        if remaining <= min_cash:
-            break
-
-        limit = limits[v.code]
-        price = get_latest_price(v.code, daily_data)
-        if price <= 0:
-            continue
-
-        # 保守配置: 只使用风控上限的一半
-        max_shares = min(limit.max_shares, int(remaining * 0.3 / price / 100) * 100)
-        if max_shares < 100:
-            continue
-
-        cost = max_shares * price
-        remaining -= cost
-
-        decisions.append(FinalDecision(
-            symbol=v.code, symbol_name=v.name,
-            volume=max_shares, entry_price=price,
-        ))
-
-    cash_used = sum(d.volume * get_latest_price(d.symbol, daily_data) for d in decisions)
+    buy_cash_used = sum(
+        d.volume * get_latest_price(d.symbol, daily_data)
+        for d in decisions if d.direction == "buy"
+    )
     return PortfolioResult(
         decisions=decisions,
-        cash_used=round(cash_used, 2),
-        cash_remaining=round(cash_available - cash_used, 2),
+        cash_used=round(buy_cash_used, 2),
+        cash_remaining=round(cash_available + sell_proceeds - buy_cash_used, 2),
+        sell_proceeds=round(sell_proceeds, 2),
         total_positions=len(decisions),
-        risk_summary="[降级模式] 使用确定性规则构建组合，保守配置",
+        risk_summary="[降级模式]",
     )
 
 

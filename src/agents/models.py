@@ -71,10 +71,26 @@ class FinalDecision:
     volume: int
     entry_price: float = 0.0  # 入场价格，用于计算浮动盈亏
     asset_type: str = "stock"  # "stock" / "etf"
+    direction: str = "buy"     # "buy" / "sell"
 
     def to_dict(self) -> dict:
-        """返回赛道标准 JSON 格式: symbol / symbol_name / volume"""
-        return {"symbol": self.symbol, "symbol_name": self.symbol_name, "volume": self.volume}
+        """返回赛道标准 JSON 格式: symbol / symbol_name / volume / direction"""
+        return {
+            "symbol": self.symbol,
+            "symbol_name": self.symbol_name,
+            "volume": self.volume,
+            "direction": self.direction,
+        }
+
+
+@dataclass
+class TargetAllocation:
+    """LLM 输出的目标仓位分配"""
+    code: str
+    name: str
+    target_weight: float       # 0.0 ~ 1.0, 0=清仓
+    confidence: float = 0.0
+    reasoning: str = ""
 
 
 @dataclass
@@ -85,3 +101,5 @@ class PortfolioResult:
     cash_remaining: float = 0.0
     total_positions: int = 0
     risk_summary: str = ""
+    target_allocations: list[TargetAllocation] = field(default_factory=list)
+    sell_proceeds: float = 0.0  # 当日卖出回收资金

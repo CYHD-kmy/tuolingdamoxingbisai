@@ -40,6 +40,7 @@ from ..agents.researchers.engine import DebateEngine
 from ..agents.managers.research_manager import ResearchManager
 from ..agents.managers.risk_manager import RiskManager
 from ..agents.managers.portfolio_manager import PortfolioManager
+from ..agents.regime_detector import RegimeDetector
 from ..screening.etf_screener import ETFScreener
 from ..utils.config import get_config
 
@@ -136,6 +137,22 @@ def run_screening(state: PipelineState) -> dict[str, Any]:
             updates["data_quality"] = quality
 
         updates["stage"] = "screening_done"
+
+        # 市场环境检测
+        try:
+            cfg_detect = get_config()
+            index_data = data.get_daily_data(cfg_detect.regime_index_code, days=60)
+            if index_data:
+                detector = RegimeDetector(
+                    lookback=cfg_detect.regime_lookback_days,
+                    index_code=cfg_detect.regime_index_code,
+                )
+                regime = detector.detect(index_data)
+                updates["market_regime"] = str(regime)
+                logger.info("市场环境: %s", regime)
+        except Exception:
+            logger.debug("市场环境检测失败，默认中性", exc_info=True)
+
         logger.info("筛选完成: %d 只候选", len(result.candidates))
     except Exception as e:
         logger.exception("筛选阶段异常")
@@ -426,6 +443,7 @@ def run_risk(state: PipelineState) -> dict[str, Any]:
         industry_map=industry_map or None,
         unlock_shares=unlock_map or None,
         rl_signals=rl_signals,
+        market_regime=state.market_regime,
     )
 
     elapsed = dict(state.elapsed)
@@ -458,18 +476,21 @@ def run_portfolio(state: PipelineState) -> dict[str, Any]:
     deep_llm = get_deep_llm()
     portfolio_mgr = PortfolioManager(deep_llm)
 
-    # 使用实际可用现金 (由 main.py 从 tracker 加载, 跨日后不再是 50 万)
+    # 使用实际可用现金
     current_positions = _build_current_positions(state)
     cash_available = max(0.0, state.available_cash)
 
-    # ETF 专用资金比例 (基于实际可用现金)
+    # 构建完整的持仓上下文 (供 LLM 和风控使用)
+    portfolio_context = _build_portfolio_context(state, cash_available)
+
+    # ETF 专用资金比例
     etf_budget = cash_available * cfg.etf_max_allocation if has_etf else 0.0
     stock_budget = cash_available - etf_budget
 
     all_decisions: list = []
     total_cash_used = 0.0
 
-    # ETF 分配
+    # ETF 分配 (ETF 不需要复杂的持仓上下文)
     if has_etf:
         etf_result = portfolio_mgr.construct_etf(
             etf_verdicts, state.etf_position_limits, state.daily_data,
@@ -479,13 +500,15 @@ def run_portfolio(state: PipelineState) -> dict[str, Any]:
         all_decisions.extend(etf_result.decisions)
         total_cash_used += etf_result.cash_used
 
-    # 股票分配
+    # 股票分配 (使用完整的持仓上下文)
     if has_stock:
         stock_cash = cash_available - total_cash_used
         stock_result = portfolio_mgr.construct(
             stock_verdicts, state.position_limits, state.daily_data,
             cash_available=max(0, stock_cash),
             total_capital=state.total_capital,
+            portfolio_context=portfolio_context,
+            market_regime=state.market_regime,
         )
         all_decisions.extend(stock_result.decisions)
         total_cash_used += stock_result.cash_used
@@ -495,16 +518,17 @@ def run_portfolio(state: PipelineState) -> dict[str, Any]:
         cash_used=total_cash_used,
         cash_remaining=cash_available - total_cash_used,
         total_positions=len(all_decisions),
+        sell_proceeds=getattr(stock_result, "sell_proceeds", 0.0) if has_stock else 0.0,
+        target_allocations=getattr(stock_result, "target_allocations", []) if has_stock else [],
     )
 
     elapsed = dict(state.elapsed)
     elapsed["portfolio"] = time.monotonic() - t0
 
-    logger.info("组合构建完成: %d 笔决策 (股票 %d + ETF %d), 使用资金 ¥%.0f",
-                len(all_decisions),
-                sum(1 for d in all_decisions if d.asset_type == "stock"),
-                sum(1 for d in all_decisions if d.asset_type == "etf"),
-                total_cash_used)
+    buy_count = sum(1 for d in all_decisions if getattr(d, "direction", "buy") == "buy")
+    sell_count = sum(1 for d in all_decisions if getattr(d, "direction", "buy") == "sell")
+    logger.info("组合构建完成: %d 笔决策 (买 %d + 卖 %d), 使用资金 ¥%.0f",
+                len(all_decisions), buy_count, sell_count, total_cash_used)
 
     return {
         "final_result": final,
@@ -682,7 +706,6 @@ def _build_current_positions(state: PipelineState) -> dict[str, int]:
         return state.current_holdings
 
     from ..agents.portfolio_tracker import PortfolioTracker
-    from ..utils.config import get_config
 
     config = get_config()
     tracker = PortfolioTracker(
@@ -694,6 +717,43 @@ def _build_current_positions(state: PipelineState) -> dict[str, int]:
     if positions:
         logger.info("已加载持仓 (文件): %d 只, 现金 %.0f", len(positions), tracker.cash)
     return positions
+
+
+def _build_portfolio_context(
+    state: PipelineState,
+    cash_available: float,
+) -> dict[str, Any] | None:
+    """
+    构建完整的持仓上下文 (供 LLM 策略使用)。
+
+    优先使用 state.current_holdings 中已有信息, 补全 daily_data 中的最新市价。
+    如果无持仓则返回 None。
+    """
+    from ..agents.portfolio_tracker import PortfolioTracker, Position
+
+    config = get_config()
+    tracker = PortfolioTracker(
+        total_capital=state.total_capital,
+        results_dir=config.results_dir,
+    )
+    tracker.load()
+    tracker.cash = cash_available
+
+    if not tracker.positions:
+        return None
+
+    # 更新市价
+    tracker.update_prices(state.daily_data)
+    # 计算 ATR 止损并更新
+    try:
+        risk_mgr = RiskManager()
+        atr_stops = risk_mgr.compute_stop_levels(tracker.positions, state.daily_data)
+        if atr_stops:
+            tracker.update_trailing_stops(state.daily_data, atr_stops)
+    except Exception:
+        logger.debug("ATR止损计算失败", exc_info=True)
+
+    return tracker.build_context(state.daily_data)
 
 
 def _print_summary(state) -> None:

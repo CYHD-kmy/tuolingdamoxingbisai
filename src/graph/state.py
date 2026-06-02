@@ -54,6 +54,9 @@ class PipelineState:
     position_limits: dict[str, PositionLimit] = field(default_factory=dict)
     final_result: PortfolioResult | None = None
 
+    # ── 市场环境 ──────────────────────────────
+    market_regime: str = "neutral"  # "bull" / "neutral" / "bear"
+
     # ── 元信息 ────────────────────────────────
     stage: str = "init"
     errors: list[str] = field(default_factory=list)

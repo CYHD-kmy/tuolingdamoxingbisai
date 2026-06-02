@@ -182,10 +182,20 @@ def main(demo: bool = False) -> None:
             # 复用已加载的 tracker (含历史持仓 + 现金), 应用当日决策
             _final = getattr(state, "final_result", None)
             _daily = getattr(state, "daily_data", {})
-            tracker.apply_decisions(
-                _final.decisions if _final else [],
-                _daily,
-            )
+            all_decisions = _final.decisions if _final else []
+
+            # 分离买卖决策: 先卖后买 (释放现金给买入用)
+            sell_decisions = [d for d in all_decisions if getattr(d, "direction", "buy") == "sell"]
+            buy_decisions = [d for d in all_decisions if getattr(d, "direction", "buy") == "buy"]
+
+            if sell_decisions:
+                sold_amount = tracker.apply_sells(sell_decisions, _daily)
+                logger.info("已卖出 %d 笔, 回收资金 ¥%.0f, 现金余额 ¥%.0f",
+                            len(sell_decisions), sold_amount, tracker.cash)
+
+            if buy_decisions:
+                tracker.apply_decisions(buy_decisions, _daily)
+
             tracker.update_prices(_daily)
             tracker.record_daily()
             tracker.save()

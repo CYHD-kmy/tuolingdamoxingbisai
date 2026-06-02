@@ -43,6 +43,7 @@ class RiskManager:
         industry_map: dict[str, str] | None = None,
         unlock_shares: dict[str, float] | None = None,
         rl_signals: dict[str, tuple[str, float]] | None = None,
+        market_regime: str = "neutral",
     ) -> dict[str, PositionLimit]:
         """
         为每个候选股计算仓位上限。
@@ -96,6 +97,15 @@ class RiskManager:
 
             # 综合计算
             final_pct = base_pct * vol_mult * conf_mult * risk_mult
+
+            # 7. 市场环境调整
+            regime_mult = {
+                "bull": self._cfg.regime_bull_mult,
+                "neutral": 1.0,
+                "bear": self._cfg.regime_bear_mult,
+            }.get(market_regime, 1.0)
+            final_pct *= regime_mult
+
             final_pct = min(final_pct, self._cfg.max_single_position)  # 硬上限 20%
 
             # 行业集中度检查
@@ -231,6 +241,60 @@ class RiskManager:
             logger.warning("触发日内熔断! 回撤: %.2f%%", drawdown * 100)
             return True
         return False
+
+    # ── ATR & 止损 ────────────────────────────
+
+    @staticmethod
+    def calc_atr(code: str, daily_data: dict[str, list[Any]], period: int = 14) -> float:
+        """计算 ATR (Average True Range)"""
+        records = daily_data.get(code, [])
+        if len(records) < period + 1:
+            return 0.0
+        tr_values: list[float] = []
+        for i in range(len(records) - period, len(records)):
+            curr = records[i]
+            prev = records[i - 1]
+            tr = max(
+                curr.high - curr.low,
+                abs(curr.high - prev.close),
+                abs(curr.low - prev.close),
+            )
+            tr_values.append(tr)
+        return sum(tr_values) / len(tr_values)
+
+    def compute_stop_levels(
+        self,
+        positions: dict[str, Any],
+        daily_data: dict[str, list[Any]],
+    ) -> dict[str, float]:
+        """
+        计算每只持仓的 ATR 动态止损价。
+
+        positions: {code: Position} 或 {code: {...}} 包含 avg_cost
+        daily_data: 日线数据
+
+        公式: stop_price = avg_cost - atr_stop_multiplier * ATR
+
+        返回: {code: stop_price}
+        """
+        stop_levels: dict[str, float] = {}
+        for code, pos in positions.items():
+            avg_cost = getattr(pos, "avg_cost", 0) or pos.get("avg_cost", 0) if isinstance(pos, dict) else getattr(pos, "avg_cost", 0)
+            if avg_cost <= 0:
+                continue
+            atr = self.calc_atr(code, daily_data, self._cfg.atr_period)
+            if atr <= 0:
+                # ATR 计算失败时，使用固定 7% 回落止损
+                stop_levels[code] = avg_cost * 0.93
+            else:
+                stop_levels[code] = avg_cost - self._cfg.atr_stop_multiplier * atr
+
+        if stop_levels:
+            logger.info(
+                "RiskManager: ATR 止损计算完成 %d 只 (ATR×%.1f)",
+                len(stop_levels), self._cfg.atr_stop_multiplier,
+            )
+        return stop_levels
 
     # ── 辅助 ──────────────────────────────────
 

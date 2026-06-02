@@ -42,6 +42,7 @@ class Position:
     last_price: float = 0.0  # 最新市价
     industry: str = ""
     asset_type: str = "stock"  # "stock" / "etf"
+    trailing_stop: float = 0.0  # 移动止损价 (0=未设置)
 
     @property
     def cost_value(self) -> float:
@@ -58,6 +59,24 @@ class Position:
     @property
     def pnl_pct(self) -> float:
         return (self.market_value / self.cost_value - 1) * 100 if self.cost_value > 0 else 0.0
+
+    @property
+    def holding_days(self) -> int:
+        """持有天数 (基于 entry_date)"""
+        if not self.entry_date:
+            return 0
+        try:
+            d1 = datetime.strptime(self.entry_date, "%Y%m%d")
+            d2 = datetime.now()
+            return (d2 - d1).days
+        except (ValueError, TypeError):
+            return 0
+
+    def ratio_of_equity(self, equity: float) -> float:
+        """仓位占比 (相对于总权益)"""
+        if equity <= 0:
+            return 0.0
+        return self.market_value / equity
 
 
 @dataclass
@@ -135,6 +154,7 @@ class PortfolioTracker:
                 last_price=pos_data.get("last_price", 0.0),
                 industry=pos_data.get("industry", ""),
                 asset_type=pos_data.get("asset_type", "stock"),
+                trailing_stop=pos_data.get("trailing_stop", 0.0),
             )
 
         logger.info(
@@ -160,6 +180,7 @@ class PortfolioTracker:
                     "last_price": p.last_price,
                     "industry": p.industry,
                     "asset_type": p.asset_type,
+                    "trailing_stop": p.trailing_stop,
                 }
                 for code, p in self.positions.items() if p.shares > 0
             },
@@ -259,6 +280,209 @@ class PortfolioTracker:
                 sold_count, total_sold, self.cash,
             )
         return total_sold
+
+    def apply_sells(
+        self,
+        decisions: list[FinalDecision],
+        daily_data: dict[str, list[Any]],
+    ) -> float:
+        """
+        执行卖出决策，回收资金到现金账户。
+
+        返回: 卖出总金额
+        """
+        total_proceeds = 0.0
+        sell_count = 0
+        for d in decisions:
+            if d.direction != "sell" or d.volume <= 0:
+                continue
+            if d.symbol not in self.positions:
+                logger.warning("PortfolioTracker: 卖出 %s 不在持仓中，跳过", d.symbol)
+                continue
+
+            pos = self.positions[d.symbol]
+            sell_shares = min(d.volume, pos.shares)
+            if sell_shares < 100:
+                continue
+
+            price = self._get_price(d.symbol, daily_data)
+            if price <= 0:
+                price = pos.last_price or d.entry_price or pos.avg_cost
+            proceeds = sell_shares * price
+            pnl = proceeds - sell_shares * pos.avg_cost
+            self.cash += proceeds
+            self.cumulative_pnl += pnl
+            total_proceeds += proceeds
+            sell_count += 1
+
+            remaining = pos.shares - sell_shares
+            if remaining < 100:  # 全部清仓
+                del self.positions[d.symbol]
+                logger.info(
+                    "PortfolioTracker: 清仓 %s (%s) %d股 @ ¥%.2f, 盈亏 %+.0f",
+                    d.symbol, pos.name, sell_shares, price, pnl,
+                )
+            else:
+                pos.shares = remaining
+                pos.last_price = price
+                logger.info(
+                    "PortfolioTracker: 减仓 %s (%s) %d→%d股, 盈亏 %+.0f",
+                    d.symbol, pos.name, sell_shares + remaining, remaining, pnl,
+                )
+
+        if sell_count > 0:
+            logger.info(
+                "PortfolioTracker: 卖出 %d 笔, 回收 ¥%.0f, 现金余额 ¥%.0f",
+                sell_count, total_proceeds, self.cash,
+            )
+        return total_proceeds
+
+    def get_stale_positions(self) -> list[dict[str, Any]]:
+        """
+        检测持仓天数过长、收益不达标的持仓。
+
+        规则:
+        - 持有 > holding_clear_days 且收益 <= holding_clear_return → 清仓信号
+        - 持有 > holding_reduce_days 且收益 < holding_reduce_return → 减仓信号
+
+        返回: [{"code": ..., "action": "clear"/"reduce", "reason": ...}, ...]
+        """
+        from ..utils.config import get_config
+        cfg = get_config()
+        stale = []
+
+        for code, pos in self.positions.items():
+            if pos.shares <= 0:
+                continue
+            days = pos.holding_days
+            pnl_pct = pos.pnl_pct
+
+            if days > cfg.holding_clear_days and pnl_pct <= cfg.holding_clear_return:
+                stale.append({
+                    "code": code, "name": pos.name, "shares": pos.shares,
+                    "holding_days": days, "pnl_pct": round(pnl_pct, 2),
+                    "action": "clear",
+                    "reason": f"持有{days}天(>{cfg.holding_clear_days})且收益{pnl_pct:+.1f}%≤{cfg.holding_clear_return}",
+                })
+            elif days > cfg.holding_reduce_days and pnl_pct < cfg.holding_reduce_return:
+                stale.append({
+                    "code": code, "name": pos.name, "shares": pos.shares,
+                    "holding_days": days, "pnl_pct": round(pnl_pct, 2),
+                    "action": "reduce",
+                    "reason": f"持有{days}天(>{cfg.holding_reduce_days})且收益{pnl_pct:+.1f}%<{cfg.holding_reduce_return}",
+                })
+
+        return stale
+
+    def check_stop_losses(self, daily_data: dict[str, list[Any]]) -> list[str]:
+        """
+        检查是否有持仓触发了止损线。
+
+        返回: 触发止损的 code 列表
+        """
+        triggered = []
+        for code, pos in self.positions.items():
+            if pos.shares <= 0:
+                continue
+            stop_price = pos.trailing_stop or (pos.avg_cost * 0.93)
+            price = self._get_price(code, daily_data) or pos.last_price
+            if 0 < price <= stop_price:
+                triggered.append(code)
+                logger.warning(
+                    "PortfolioTracker: %s (%s) 触发止损! 现价 ¥%.2f ≤ 止损 ¥%.2f",
+                    code, pos.name, price, stop_price,
+                )
+        return triggered
+
+    def update_trailing_stops(
+        self,
+        daily_data: dict[str, list[Any]],
+        atr_stop_levels: dict[str, float] | None = None,
+    ) -> None:
+        """
+        更新移动止损价 (价格上涨时抬高止损)。
+
+        atr_stop_levels: {code: atr_stop_price} 由 RiskManager 计算
+        """
+        for code, pos in self.positions.items():
+            if pos.shares <= 0:
+                continue
+            price = self._get_price(code, daily_data) or pos.last_price
+            if price <= 0:
+                continue
+
+            # 如果有 ATR 止损价，使用它；否则用简单固定比例
+            if atr_stop_levels and code in atr_stop_levels:
+                new_stop = atr_stop_levels[code]
+            else:
+                new_stop = pos.avg_cost * 0.93  # 固定 7% 回落止损
+
+            # 只在价格创新高时抬升止损 (移动止损)
+            if new_stop > pos.trailing_stop:
+                pos.trailing_stop = new_stop
+
+    def build_context(
+        self,
+        daily_data: dict[str, list[Any]] | None = None,
+    ) -> dict[str, Any]:
+        """
+        构建完整的组合上下文 (供 LLM 策略/分析使用)。
+
+        返回一个 dict，包含:
+        - cash, total_equity, total_return_pct
+        - positions: 每只持仓的详细状态
+        - stale_positions: 需要处理的持仓
+        - industry_exposure: 行业分布
+        """
+        if daily_data:
+            self.update_prices(daily_data)
+
+        equity = self.total_equity()
+        stale = self.get_stale_positions()
+        stop_triggered = self.check_stop_losses(daily_data or {})
+        stale_codes = {s["code"] for s in stale}
+
+        positions_detail = []
+        for code, pos in self.positions.items():
+            if pos.shares <= 0:
+                continue
+            days = pos.holding_days
+            positions_detail.append({
+                "code": code,
+                "name": pos.name,
+                "shares": pos.shares,
+                "avg_cost": pos.avg_cost,
+                "last_price": pos.last_price,
+                "market_value": round(pos.market_value, 2),
+                "weight_in_equity": round(pos.ratio_of_equity(equity) * 100, 1),
+                "pnl": round(pos.unrealized_pnl, 2),
+                "pnl_pct": round(pos.pnl_pct, 2),
+                "holding_days": days,
+                "entry_date": pos.entry_date,
+                "industry": pos.industry,
+                "asset_type": pos.asset_type,
+                "is_stale": code in stale_codes,
+                "stale_action": next((s["action"] for s in stale if s["code"] == code), None),
+                "stop_triggered": code in stop_triggered,
+                "trailing_stop": pos.trailing_stop if pos.trailing_stop > 0 else None,
+            })
+
+        return {
+            "date": self._date,
+            "total_capital": self._capital,
+            "cash": round(self.cash, 2),
+            "market_value": round(self.total_market_value(), 2),
+            "total_equity": round(equity, 2),
+            "total_return_pct": round(self.total_return(), 2),
+            "cumulative_pnl": round(self.cumulative_pnl, 2),
+            "position_count": len(positions_detail),
+            "positions": positions_detail,
+            "stale_positions": stale,
+            "stop_triggered_codes": stop_triggered,
+            "industry_exposure": {
+                k: round(v * 100, 1) for k, v in self.industry_exposure().items()
+            },
+        }
 
     def update_prices(self, daily_data: dict[str, list[Any]]) -> None:
         """用最新行情更新所有持仓的市价"""

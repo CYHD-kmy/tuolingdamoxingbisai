@@ -139,6 +139,27 @@ class Config:
         default_factory=lambda: _env_bool("TRANSFORMER_RL_FEATURES", False)
     )
 
+    # ── 持仓管理 ──────────────────────────────
+    # 持仓天数管理
+    holding_reduce_days: int = 5            # 持有超过此天数且收益低于阈值 → 建议减仓
+    holding_reduce_return: float = 0.03     # 减仓收益阈值 (3%)
+    holding_clear_days: int = 8             # 持有超过此天数且收益低于阈值 → 建议清仓
+    holding_clear_return: float = 0.0       # 清仓收益阈值 (0%)
+
+    # ATR 动态止损
+    atr_period: int = 14                    # ATR 计算周期
+    atr_stop_multiplier: float = 2.0        # 止损 ATR 倍数 (stop = cost - N * ATR)
+
+    # 目标仓位模型
+    use_target_allocation: bool = True      # 启用目标仓位模式 (而非直接买卖信号)
+    max_total_alloc_weight: float = 0.90    # 总仓位权重上限 (保留 10% 现金)
+
+    # ── 市场环境 ──────────────────────────────
+    regime_lookback_days: int = 20          # 市场环境判定回看天数
+    regime_bull_mult: float = 1.25          # 牛市仓位倍率
+    regime_bear_mult: float = 0.65          # 熊市仓位倍率
+    regime_index_code: str = "000300"       # 市场环境判定基准指数 (沪深300)
+
     # ── ETF ──────────────────────────────────────
     etf_enabled: bool = True
     etf_max_allocation: float = 0.20       # ETF 最大资金占比
