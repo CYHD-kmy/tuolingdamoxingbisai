@@ -229,6 +229,37 @@ class PortfolioTracker:
 
             self.cash -= cost
 
+    def liquidate_all(self, daily_data: dict[str, list[Any]]) -> float:
+        """
+        卖出全部持仓 (清仓), 将市值转为现金。
+
+        daily_data: 当日行情数据, 用于获取最新卖出价
+
+        返回: 卖出总金额 (market value)
+        """
+        total_sold = 0.0
+        sold_count = 0
+        for code, pos in list(self.positions.items()):
+            if pos.shares <= 0:
+                continue
+            price = self._get_price(code, daily_data)
+            if price <= 0:
+                price = pos.avg_cost  # 无市价时用成本价兜底
+            proceeds = pos.shares * price
+            pnl = proceeds - pos.cost_value
+            self.cash += proceeds
+            self.cumulative_pnl += pnl
+            total_sold += proceeds
+            sold_count += 1
+
+        self.positions.clear()
+        if sold_count > 0:
+            logger.info(
+                "PortfolioTracker: 清仓 %d 只, 回收 ¥%.0f, 现金余额 ¥%.0f",
+                sold_count, total_sold, self.cash,
+            )
+        return total_sold
+
     def update_prices(self, daily_data: dict[str, list[Any]]) -> None:
         """用最新行情更新所有持仓的市价"""
         for code, pos in self.positions.items():
