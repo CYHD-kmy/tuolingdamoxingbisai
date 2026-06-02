@@ -88,6 +88,11 @@
   <div id="historySummary" style="color:var(--muted);font-size:14px;">加载中...</div>
 </div>
 
+<div class="section holdings-section">
+  <div class="section-title">&#128188; 当前持仓 <span class="badge" id="holdCount">-</span></div>
+  <div id="holdingsSummary" style="color:var(--muted);font-size:14px;">加载中...</div>
+</div>
+
 <div class="section">
   <div class="section-title">快速开始</div>
   <div style="font-size:13px; color:var(--muted); line-height:2;">
@@ -130,11 +135,35 @@ async function init() {
     const totalElapsed = (d.elapsed?.total || 0).toFixed(1);
     document.getElementById('statusBar').innerHTML =
       '<div class="stat-card"><div class="val">'+(d.date||'-')+'</div><div class="lbl">日期</div></div>' +
-      '<div class="stat-card"><div class="val">'+(d.total_capital/10000).toFixed(0)+'万</div><div class="lbl">总资金</div></div>' +
+      '<div class="stat-card"><div class="val">'+((d.total_equity||d.total_capital)/10000).toFixed(1)+'万</div><div class="lbl">总权益</div></div>' +
       '<div class="stat-card"><div class="val">'+d.decisions_count+'</div><div class="lbl">决策数</div></div>' +
       '<div class="stat-card"><div class="val">'+d.candidates_count+'</div><div class="lbl">候选池</div></div>' +
       '<div class="stat-card"><div class="val">'+totalElapsed+'s</div><div class="lbl">总耗时</div></div>' +
       '<div class="stat-card"><div class="val" style="color:'+(d.errors_count?'var(--down)':'var(--up)')+'">'+d.errors_count+'</div><div class="lbl">异常</div></div>';
+  } catch(e) { console.error(e); }
+
+  try {
+    const h = await apiFetch('/api/holdings');
+    document.getElementById('holdCount').textContent = h.positions.length;
+    if (h.positions.length === 0) {
+      document.getElementById('holdingsSummary').innerHTML = '暂无持仓';
+    } else {
+      document.getElementById('holdingsSummary').innerHTML = h.positions.map(p => {
+        const sign = p.pnl >= 0 ? '+' : '';
+        const clr = p.pnl >= 0 ? 'var(--up)' : 'var(--down)';
+        return '<div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border);">' +
+          '<span><strong>'+p.code+'</strong> '+p.name+'</span>' +
+          '<span>'+p.shares.toLocaleString()+' 股</span>' +
+          '<span>市值 ¥'+p.market_value.toLocaleString()+' · '+p.weight_pct+'%</span>' +
+          '<span style="color:'+clr+'">'+sign+'¥'+p.pnl.toLocaleString()+' ('+sign+p.pnl_pct+'%)</span>' +
+          '</div>';
+      }).join('') +
+      '<div style="margin-top:10px;display:flex;justify-content:space-between;font-weight:700;">' +
+        '<span>总权益 ¥'+h.total_equity.toLocaleString()+'</span>' +
+        '<span>现金 ¥'+h.cash.toLocaleString()+'</span>' +
+        '<span style="color:'+(h.total_return>=0?'var(--up)':'var(--down)')+'">'+(h.total_return>=0?'+':'')+h.total_return.toFixed(2)+'%</span>' +
+      '</div>';
+    }
   } catch(e) { console.error(e); }
 
   try {

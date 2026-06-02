@@ -17,6 +17,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
@@ -121,11 +122,98 @@ class PortfolioTracker:
         self.cumulative_pnl: float = 0.0
         self.history: list[dict[str, Any]] = []
         self._date: str = datetime.now().strftime("%Y%m%d")
+        self._tampered: bool = False
+        self._pipeline_version: str = ""
 
-    # ── 加载/保存 ──────────────────────────────
+    # ── 完整性校验 ──────────────────────────────
+
+    @staticmethod
+    def _compute_checksum(positions: dict, cash: float, pnl: float, history: list) -> str:
+        """计算持仓数据的确定性哈希 (排除时间戳等非确定性字段)。"""
+        raw = json.dumps({
+            "positions": {k: {
+                "code": v.get("code", k),
+                "name": v.get("name", ""),
+                "shares": v.get("shares", 0),
+                "avg_cost": v.get("avg_cost", 0),
+            } for k, v in sorted(positions.items())},
+            "cash": round(cash, 2),
+            "cumulative_pnl": round(pnl, 2),
+            "history_dates": [h.get("date") for h in history[-30:]],
+        }, sort_keys=True, ensure_ascii=False)
+        return hashlib.sha256(raw.encode()).hexdigest()[:16]
+
+    def _verify_integrity(self, data: dict) -> bool:
+        """验证加载的数据与存储哈希是否一致。"""
+        stored_hash = data.get("_integrity_hash", "")
+        if not stored_hash:
+            # 旧格式文件没有哈希, 不算篡改
+            return True
+        computed = self._compute_checksum(
+            data.get("positions", {}),
+            data.get("cash", 0),
+            data.get("cumulative_pnl", 0),
+            data.get("history", []),
+        )
+        return computed == stored_hash
+
+    @staticmethod
+    def _trace_decisions_hash(trace: dict) -> str:
+        """提取 trace 中决策部分的确定性哈希。"""
+        decisions = trace.get("decisions", [])
+        raw = json.dumps([
+            {
+                "symbol": d.get("symbol", d.get("code", "")),
+                "direction": d.get("direction", d.get("action", "")),
+                "volume": d.get("volume", d.get("shares", 0)),
+                "price": d.get("entry_price", d.get("price", 0)),
+            }
+            for d in decisions
+        ], sort_keys=True, ensure_ascii=False)
+        return hashlib.sha256(raw.encode()).hexdigest()[:16]
+
+    def _cross_validate_trace(self, data: dict) -> bool:
+        """交叉验证: 持仓引用的 trace 文件是否与原始决策记录一致。"""
+        ref_date = data.get("_last_trace_date", "")
+        ref_hash = data.get("_last_trace_hash", "")
+        if not ref_date or not ref_hash:
+            # 旧格式没有引用, 标记为不确定但放行 (新管道写入后会补全)
+            return True
+
+        trace_path = os.path.join(self._results_dir, f"trace_{ref_date}.json")
+        if not os.path.isfile(trace_path):
+            logger.error("交叉验证: trace 文件 %s 不存在", os.path.basename(trace_path))
+            return False
+
+        try:
+            with open(trace_path, "r", encoding="utf-8") as f:
+                trace = json.load(f)
+        except (json.JSONDecodeError, OSError):
+            logger.error("交叉验证: trace 文件 %s 损坏", os.path.basename(trace_path))
+            return False
+
+        actual_hash = self._trace_decisions_hash(trace)
+        if actual_hash != ref_hash:
+            logger.error(
+                "交叉验证: trace 决策哈希不匹配 (期望 %s, 实际 %s)",
+                ref_hash[:8], actual_hash[:8],
+            )
+            return False
+
+        return True
+
+    @property
+    def tampered(self) -> bool:
+        """持仓文件是否被非管道程序篡改。"""
+        return self._tampered
+
+    @property
+    def last_pipeline_date(self) -> str:
+        """上次由管道程序写入的日期。"""
+        return getattr(self, "_last_pipeline_date", "")
 
     def load(self) -> None:
-        """从磁盘加载持仓状态"""
+        """从磁盘加载持仓状态, 含完整性校验和交叉验证。"""
         if not os.path.isfile(self._filepath):
             logger.info("PortfolioTracker: 无历史持仓文件，使用初始资金")
             self.cash = self._capital
@@ -143,6 +231,23 @@ class PortfolioTracker:
         self.cash = data.get("cash", self._capital)
         self.cumulative_pnl = data.get("cumulative_pnl", 0.0)
         self.history = data.get("history", [])
+
+        # 第1层: 完整性哈希校验 (防直接篡改)
+        if not self._verify_integrity(data):
+            self._tampered = True
+            logger.error(
+                "PortfolioTracker: 持仓文件完整性校验失败! "
+                "positions.json 可能被手动修改或替换, 请检查数据来源"
+            )
+
+        # 第2层: 交叉验证 — 引用trace是否依然匹配 (防整体替换)
+        if not self._cross_validate_trace(data):
+            self._tampered = True
+            logger.error(
+                "PortfolioTracker: 交叉验证失败! "
+                "positions.json 与管道决策记录不匹配, "
+                "文件可能被其他来源的持仓数据替换"
+            )
 
         for code, pos_data in data.get("positions", {}).items():
             self.positions[code] = Position(
@@ -163,32 +268,64 @@ class PortfolioTracker:
         )
 
     def save(self) -> None:
-        """持久化当前持仓到磁盘"""
+        """持久化当前持仓到磁盘, 附带完整性哈希和trace引用。"""
         os.makedirs(self._results_dir, exist_ok=True)
+
+        # 先构建 positions 字典 (不含哈希), 再用它以计算哈希
+        positions_dict = {
+            code: {
+                "name": p.name,
+                "shares": p.shares,
+                "avg_cost": p.avg_cost,
+                "entry_date": p.entry_date,
+                "last_price": p.last_price,
+                "industry": p.industry,
+                "asset_type": p.asset_type,
+                "trailing_stop": p.trailing_stop,
+            }
+            for code, p in self.positions.items() if p.shares > 0
+        }
+
+        # 关联当日 trace 文件, 用于交叉验证
+        trace_hash = ""
+        trace_path = os.path.join(self._results_dir, f"trace_{self._date}.json")
+        if os.path.isfile(trace_path):
+            try:
+                with open(trace_path, "r", encoding="utf-8") as f:
+                    trace_data = json.load(f)
+                trace_hash = self._trace_decisions_hash(trace_data)
+            except (json.JSONDecodeError, OSError):
+                logger.warning("PortfolioTracker: 无法读取 trace 文件用于引用")
 
         data = {
             "date": self._date,
             "total_capital": self._capital,
             "cash": round(self.cash, 2),
             "cumulative_pnl": round(self.cumulative_pnl, 2),
-            "positions": {
-                code: {
-                    "name": p.name,
-                    "shares": p.shares,
-                    "avg_cost": p.avg_cost,
-                    "entry_date": p.entry_date,
-                    "last_price": p.last_price,
-                    "industry": p.industry,
-                    "asset_type": p.asset_type,
-                    "trailing_stop": p.trailing_stop,
-                }
-                for code, p in self.positions.items() if p.shares > 0
-            },
-            "history": self.history[-90:],  # 保留最近90天
+            "positions": positions_dict,
+            "history": self.history[-90:],
+            "_integrity_hash": self._compute_checksum(
+                positions_dict, self.cash, self.cumulative_pnl, self.history
+            ),
+            "_pipeline_version": "1.1.0",
+            "_last_pipeline_date": self._date,
+            "_last_trace_date": self._date if trace_hash else "",
+            "_last_trace_hash": trace_hash,
         }
         with open(self._filepath, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
-        logger.info("PortfolioTracker: 持仓已保存 (%d 只)", len(self.positions))
+
+        # 每日备份: 保存时间戳副本
+        backup_dir = os.path.join(self._results_dir, "backups")
+        os.makedirs(backup_dir, exist_ok=True)
+        backup_path = os.path.join(backup_dir, f"positions_{self._date}.json")
+        with open(backup_path, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+
+        logger.info(
+            "PortfolioTracker: 持仓已保存 (%d 只) + 备份",
+            len(self.positions),
+        )
 
     # ── 交易操作 ──────────────────────────────
 

@@ -205,12 +205,63 @@ async def api_status():
         "ready": True,
         "date": trace.get("date", ""),
         "total_capital": trace.get("total_capital", 0),
+        "total_equity": trace.get("total_equity", trace.get("total_capital", 0)),
+        "total_return": trace.get("total_return", 0),
         "pipeline_version": trace.get("pipeline_version", ""),
         "elapsed": trace.get("elapsed", {}),
         "candidates_count": trace.get("screening", {}).get("total_candidates", 0),
         "decisions_count": len(trace.get("decisions", [])),
         "errors_count": len(trace.get("errors", [])),
         "errors": trace.get("errors", [])[:5],
+    }
+
+
+@app.get("/api/holdings")
+async def api_holdings():
+    """当前持仓状态 (从 positions.json 读取)"""
+    positions_path = os.path.join(RESULTS_DIR, "positions.json")
+    if not os.path.isfile(positions_path):
+        return {"date": None, "cash": 0, "total_equity": 0, "positions": []}
+
+    try:
+        with open(positions_path, encoding="utf-8") as f:
+            data = json.load(f)
+    except Exception:
+        return {"date": None, "cash": 0, "total_equity": 0, "positions": []}
+
+    positions = []
+    total_mv = 0.0
+    for code, pos in data.get("positions", {}).items():
+        mv = pos["shares"] * pos.get("last_price", pos["avg_cost"])
+        cost = pos["shares"] * pos["avg_cost"]
+        pnl = mv - cost
+        pnl_pct = (pnl / cost * 100) if cost > 0 else 0
+        total_mv += mv
+        positions.append({
+            "code": code,
+            "name": pos.get("name", ""),
+            "shares": pos["shares"],
+            "avg_cost": round(pos["avg_cost"], 2),
+            "last_price": round(pos.get("last_price", pos["avg_cost"]), 2),
+            "market_value": round(mv, 2),
+            "cost_value": round(cost, 2),
+            "pnl": round(pnl, 2),
+            "pnl_pct": round(pnl_pct, 2),
+            "weight_pct": 0,
+        })
+
+    cash = data.get("cash", 0)
+    equity = cash + total_mv
+    for p in positions:
+        p["weight_pct"] = round(p["market_value"] / equity * 100, 1) if equity > 0 else 0
+
+    return {
+        "date": data.get("date", ""),
+        "cash": round(cash, 2),
+        "total_equity": round(equity, 2),
+        "total_market_value": round(total_mv, 2),
+        "total_return": round(data.get("cumulative_pnl", 0) / data.get("total_capital", 500000) * 100, 2),
+        "positions": positions,
     }
 
 
@@ -230,6 +281,8 @@ async def api_decisions(date: str | None = None):
         "cash_remaining": portfolio.get("cash_remaining", 0),
         "total_positions": portfolio.get("total_positions", 0),
         "total_capital": trace.get("total_capital", 0),
+        "total_equity": trace.get("total_equity", trace.get("total_capital", 0)),
+        "total_return": trace.get("total_return", 0),
     }
 
 

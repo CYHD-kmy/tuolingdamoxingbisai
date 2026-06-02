@@ -79,7 +79,6 @@ def main(demo: bool = False) -> None:
 
         logger.info("===== 智投未来 启动 =====")
         logger.info("日期: %s", datetime.now().strftime("%Y-%m-%d"))
-        logger.info("初始资金: ¥%.0f", config.initial_capital)
         logger.info("Quick LLM: %s", config.llm_quick)
         logger.info("Deep LLM:  %s", config.llm_deep)
         logger.info("Tushare: %s", "可用" if config.tushare_available else "未配置")
@@ -96,16 +95,33 @@ def main(demo: bool = False) -> None:
         hold_cash = tracker.cash
         hold_positions = tracker.current_positions_dict()
 
+        if tracker.tampered:
+            logger.critical(
+                "持仓文件校验失败! positions.json 被篡改或与管道决策记录不匹配。"
+            )
+            logger.critical(
+                "系统将拒绝继续运行以保护账户安全。\n"
+                "可能原因: 1) 文件被手动修改 2) 文件被其他来源的数据替换。\n"
+                "恢复方法: 从 %s/backups/ 中找到正确的备份文件, 覆盖 positions.json",
+                config.results_dir,
+            )
+            sys.exit(1)
+
+        # 有效资金: 有持仓用实际权益, 无持仓用初始资金
+        effective_capital = tracker.total_equity() if hold_positions else config.initial_capital
         if hold_positions:
-            logger.info("已加载持仓: %d 只, 可用现金 ¥%.0f, 持仓市值 ¥%.0f",
-                        len(hold_positions), hold_cash, tracker.total_market_value())
+            logger.info(
+                "已加载持仓: %d 只, 总权益 ¥%.0f, 可用现金 ¥%.0f, 持仓市值 ¥%.0f",
+                len(hold_positions), effective_capital, hold_cash,
+                tracker.total_market_value(),
+            )
         else:
             logger.info("无历史持仓，初始资金 ¥%.0f", hold_cash)
         logger.info("")
 
         try:
             state = run_pipeline(
-                total_capital=config.initial_capital,
+                total_capital=effective_capital,
                 available_cash=hold_cash,
                 current_holdings=hold_positions,
             )
@@ -204,6 +220,17 @@ def main(demo: bool = False) -> None:
             logger.info("持仓已保存: %.0f%% 仓位, 权益 ¥%.0f, 累计收益 %+.2f%%",
                         tracker.total_market_value() / total_equity * 100 if total_equity > 0 else 0,
                         total_equity, total_return)
+
+            # 回写实际权益到 trace JSON, 使 API 看板展示正确数值
+            try:
+                with open(trace_path, encoding="utf-8") as f:
+                    trace_data = json.load(f)
+                trace_data["total_equity"] = round(total_equity, 2)
+                trace_data["total_return"] = round(total_return, 2)
+                with open(trace_path, "w", encoding="utf-8") as f:
+                    json.dump(trace_data, f, ensure_ascii=False, indent=2)
+            except Exception:
+                logger.debug("回写权益到 trace 失败", exc_info=True)
 
             report_md = generate_daily_report(state, tracker)
             date_str = datetime.now().strftime("%Y%m%d")
