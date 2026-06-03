@@ -117,17 +117,11 @@ class ScreeningPipeline:
             liquid = liquid[:max_daily_batch]
             logger.info("3b/5 成交额截断: %d 只", len(liquid))
 
-        # ── 4. 批量拉取日线和资金流向 ────────────
+        # ── 4. 批量拉取日线 ────────────────────
         codes = extract_codes(liquid)
-        logger.info("4/5 批量拉取 %d 只股票数据...", len(codes))
+        logger.info("4/5 批量拉取 %d 只股票日线数据...", len(codes))
 
         daily_data = self._data.batch_daily_data(codes, days=30, max_workers=4)
-        fund_flows = self._data.batch_fund_flows(codes, days=5, max_workers=6)
-
-        # ── 4b. 增强数据源仅对 Top-20 候选拉取 (见 step 6) ──
-        northbound_stocks: dict[str, list[dict]] = {}
-        financials: dict[str, list] = {}
-        shareholders: dict[str, list] = {}
 
         # ── 5. 波动率过滤 ───────────────────────
         exclude_vol = filter_volatility(daily_data)
@@ -136,15 +130,37 @@ class ScreeningPipeline:
             liquid = [s for s in liquid if s.code not in exclude_vol]
             logger.info("5/5 波动率过滤后: %d 只", len(codes))
 
-        # ── 6. 多因子打分 ───────────────────────
+        # ── 5b. 第一轮打分 (基础因子) ───────────
+        # 仅用快照+日线数据快速打分, 避免对 500 只股票逐只拉取增强数据
         snap_map = {s.code: s for s in liquid}
-        scored = self._scorer.score_all(
-            codes, snap_map, daily_data, fund_flows,
+        round1_scored = self._scorer.score_all(
+            codes, snap_map, daily_data,
+            fund_flows={},           # 第二轮再拉
+            northbound_stocks=None,  # 第二轮再拉
+            financials=None,         # 第二轮再拉
+            shareholders=None,       # 第二轮再拉
+        )
+        round1_top = self._scorer.top_n(round1_scored, n=min(top_n * 2, len(round1_scored)))
+        codes_r1 = [fs.code for fs in round1_top]
+        logger.info("5b/5 第一轮基础打分完成: Top-%d → %d 只候选进入增强分析",
+                    top_n * 2, len(codes_r1))
+
+        # ── 6. 对 Top-40 候选拉取增强数据 ─────────
+        # 资金流向 + 北向持仓 + 财务指标 + 筹码集中度
+        fund_flows = self._data.batch_fund_flows(codes_r1, days=5, max_workers=8)
+        northbound_stocks = self._data.batch_northbound_stocks(codes_r1, days=10, max_workers=6)
+        financials = self._data.batch_financials(codes_r1, max_workers=4)
+        shareholders = self._data.batch_shareholders(codes_r1, max_workers=6)
+
+        # ── 7. 第二轮打分 (全因子) ───────────────
+        # 用增强数据重新打分, 此时 capital_flow/northbound 等因子可用
+        round2_scored = self._scorer.score_all(
+            codes_r1, snap_map, daily_data, fund_flows,
             northbound_stocks=northbound_stocks,
             financials=financials,
             shareholders=shareholders,
         )
-        top = self._scorer.top_n(scored, n=top_n)
+        top = self._scorer.top_n(round2_scored, n=top_n)
 
         elapsed = time.monotonic() - t0
 

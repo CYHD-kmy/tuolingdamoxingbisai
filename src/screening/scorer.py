@@ -114,9 +114,12 @@ class ScreeningScorer:
                 scores["volume_price"] = s
                 weights_used += self._weights["volume_price"]
 
-            # 资金 (如果数据不可用则跳过，权重重新分配)
-            if "capital_flow" in available_factors and flow:
-                s = self._score_capital_flow(flow)
+            # 资金 — 有真实数据用真实数据，否则从日线 OHLCV 推算代理指标
+            if "capital_flow" in available_factors:
+                if flow:
+                    s = self._score_capital_flow(flow)
+                else:
+                    s = self._score_capital_flow_proxy(daily, snapshot)
                 scores["capital_flow"] = s
                 weights_used += self._weights["capital_flow"]
 
@@ -177,20 +180,22 @@ class ScreeningScorer:
         financials: dict[str, list] | None = None,
         shareholders: dict[str, list] | None = None,
     ) -> set[str]:
-        """检测哪些因子的数据可用"""
+        """检测哪些因子的数据可用 — 缺失数据改用代理指标，不再完全跳过"""
         factors = {"trend", "momentum", "volume_price", "sentiment", "quality", "risk", "liquidity"}
-        if any(v for v in fund_flows.values()):
-            factors.add("capital_flow")
-        else:
-            logger.info("资金流向数据不可用，跳过 capital_flow 因子")
-        if northbound_stocks and any(v for v in northbound_stocks.values()):
-            factors.add("northbound")
-        else:
-            logger.info("北向资金数据不可用，跳过 northbound 因子")
+        # capital_flow: 有真实数据用真实数据，否则用量价代理 (永不跳过)
+        factors.add("capital_flow")
+        if not any(v for v in fund_flows.values()):
+            logger.info("资金流向: 使用量价代理指标 (Tushare权限不足 + AKShare反爬)")
+        # northbound: 有真实数据用真实数据，否则用中性值
+        factors.add("northbound")
+        if not (northbound_stocks and any(v for v in northbound_stocks.values())):
+            logger.info("北向资金: 使用中性基准值 (无个股北向数据)")
+        # shareholder_conc: 仅在有数据时启用
         if shareholders and any(v for v in shareholders.values()):
             factors.add("shareholder_conc")
         else:
             logger.info("股东人数数据不可用，跳过 shareholder_conc 因子")
+        # financials: 有数据时增强 quality
         if not (financials and any(v for v in financials.values())):
             logger.info("深度财务数据不可用，quality 因子使用基础 PE 评分")
         return factors
@@ -213,6 +218,7 @@ class ScreeningScorer:
         趋势因子: 均线多头排列程度。
         - MA5 > MA10 > MA20 > MA60 → 满分
         - 部分满足 → 按满足条数给分
+        - MA60 实时计算，不依赖预计算字段
         """
         if len(daily) < 20:
             return 50.0
@@ -222,7 +228,16 @@ class ScreeningScorer:
             score += 12
         if latest.ma10 > latest.ma20:
             score += 12
-        if latest.ma20 > latest.ma60:
+
+        # MA60: 从日线收盘价实时计算 (StockDaily 未预计算 MA60)
+        if len(daily) >= 60:
+            ma60_val = sum(d.close for d in daily[-60:]) / 60.0
+        elif len(daily) >= 30:
+            ma60_val = sum(d.close for d in daily[-30:]) / min(len(daily), 30)
+        else:
+            ma60_val = latest.ma20  # 退化为 MA20
+
+        if latest.ma20 > ma60_val:
             score += 10
         if latest.close > latest.ma5:
             score += 8
@@ -318,6 +333,57 @@ class ScreeningScorer:
                 score += 3
 
         return max(0, min(100, score))
+
+    @staticmethod
+    def _score_capital_flow_proxy(daily: list[StockDaily], snapshot: MarketSnapshot) -> float:
+        """
+        资金因子代理: 从日线 OHLCV 推算资金流向信号。
+
+        无法获取真实主力净流入时，用以下指标代理:
+        - 量价配合: 放量上涨 = 资金流入, 缩量下跌 = 资金流出
+        - 日内强度: (收盘-开盘)/开盘 ≈ 日内资金方向
+        - 连续信号一致性
+
+        这是统计代理，精度不及真实数据，但能保留 capital_flow 因子的区分度。
+        """
+        if len(daily) < 5:
+            return 50.0
+
+        score = 50.0
+        recent = daily[-5:]
+
+        for d in recent:
+            if d.volume == 0:
+                continue
+            # 日内资金方向: 阳线 = 买入主导, 阴线 = 卖出主导
+            intraday_bias = (d.close - d.open) / d.open  # 日内涨跌幅
+            # 量能相对变化 (与自身近20日均量比)
+            avg_vol_20 = sum(x.volume for x in daily[-20:] if hasattr(x, 'volume')) / max(1, len([x for x in daily[-20:] if hasattr(x, 'volume')]))
+            vol_ratio = d.volume / max(avg_vol_20, 1) if len(daily) >= 20 else 1.0
+
+            # 放量阳线 = 强买入信号 (+), 缩量阴线 = 弱卖出信号 (-)
+            if intraday_bias > 0.01 and vol_ratio > 1.3:
+                score += 8   # 放量上涨, 资金流入
+            elif intraday_bias > 0.005 and vol_ratio > 1.0:
+                score += 5   # 温和放量上涨
+            elif intraday_bias > 0:
+                score += 2   # 小幅上涨
+            elif intraday_bias < -0.015 and vol_ratio > 1.2:
+                score -= 8   # 放量下跌, 资金流出
+            elif intraday_bias < -0.01:
+                score -= 5   # 下跌
+            elif intraday_bias < 0:
+                score -= 2   # 小幅下跌
+
+        # 当日量比加成 (快照级别)
+        vol_ratio_today = snapshot.volume_ratio if snapshot.volume_ratio > 0 else 1.0
+        pct_chg = snapshot.pct_chg
+        if vol_ratio_today > 1.5 and pct_chg > 0:
+            score += 8
+        elif vol_ratio_today > 1.5 and pct_chg < 0:
+            score -= 6
+
+        return max(5, min(95, score))
 
     @staticmethod
     def _score_sentiment_proxy(

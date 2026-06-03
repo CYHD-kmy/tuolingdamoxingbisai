@@ -353,21 +353,27 @@ class TushareFetcher:
             results = []
             for _, r in df.iterrows():
                 try:
+                    buy_elg = float(r.get("buy_elg_vol", 0) or 0)
+                    sell_elg = float(r.get("sell_elg_vol", 0) or 0)
+                    buy_lg = float(r.get("buy_lg_vol", 0) or 0)
+                    sell_lg = float(r.get("sell_lg_vol", 0) or 0)
+                    buy_md = float(r.get("buy_md_vol", 0) or 0)
+                    sell_md = float(r.get("sell_md_vol", 0) or 0)
+                    buy_sm = float(r.get("buy_sm_vol", 0) or 0)
+                    sell_sm = float(r.get("sell_sm_vol", 0) or 0)
+
+                    total_vol = buy_elg + sell_elg + buy_lg + sell_lg + buy_md + sell_md + buy_sm + sell_sm
+                    main_net = buy_elg + buy_lg - sell_elg - sell_lg
+                    main_pct = round(main_net / total_vol * 100, 2) if total_vol > 0 else 0.0
+
                     results.append(FundFlow(
                         date=str(r["trade_date"]),
-                        main_net_inflow=float(r.get("buy_elg_vol", 0) or 0)
-                                      + float(r.get("buy_lg_vol", 0) or 0)
-                                      - float(r.get("sell_elg_vol", 0) or 0)
-                                      - float(r.get("sell_lg_vol", 0) or 0),
-                        super_large_net=float(r.get("buy_elg_vol", 0) or 0)
-                                      - float(r.get("sell_elg_vol", 0) or 0),
-                        large_net=float(r.get("buy_lg_vol", 0) or 0)
-                                 - float(r.get("sell_lg_vol", 0) or 0),
-                        medium_net=float(r.get("buy_md_vol", 0) or 0)
-                                  - float(r.get("sell_md_vol", 0) or 0),
-                        small_net=float(r.get("buy_sm_vol", 0) or 0)
-                                 - float(r.get("sell_sm_vol", 0) or 0),
-                        main_pct=0.0,
+                        main_net_inflow=main_net,
+                        super_large_net=buy_elg - sell_elg,
+                        large_net=buy_lg - sell_lg,
+                        medium_net=buy_md - sell_md,
+                        small_net=buy_sm - sell_sm,
+                        main_pct=main_pct,
                     ))
                 except (ValueError, KeyError):
                     continue
@@ -408,13 +414,14 @@ class TushareFetcher:
             return []
 
     def get_northbound_stock(self, code: str, days: int = 10) -> list[dict]:
-        """个股沪深股通持仓变化 (hk_hold 接口)"""
+        """个股沪深股通持仓变化 (hk_hold 接口, 近期按季度更新)"""
         if not self.available:
             return []
         try:
             api = self._get_api()
             end = datetime.now().strftime("%Y%m%d")
-            start = (datetime.now() - timedelta(days=days * 2)).strftime("%Y%m%d")
+            # hk_hold 近几个季度只按季末日期返回, 需扩大日期范围以覆盖至少2个季度
+            start = (datetime.now() - timedelta(days=200)).strftime("%Y%m%d")
             code_ts = self._ts_code(code)
             self._sleep()
             df = api.hk_hold(ts_code=code_ts, start_date=start, end_date=end)

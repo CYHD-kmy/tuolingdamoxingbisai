@@ -517,13 +517,72 @@ class UnifiedDataInterface:
             del futures
         return results
 
+    def _get_akshare(self) -> AKShareFetcher | None:
+        """获取 AKShare fetcher 实例，用于直连数据拉取（跳过优先级链）"""
+        for f in self._fetchers:
+            if f.name == "akshare":
+                return f
+        return None
+
     def batch_fund_flows(
         self, codes: list[str], days: int = 5, max_workers: int = 6
     ) -> dict[str, list[FundFlow]]:
-        """并发获取多个股票的资金流向"""
+        """并发获取多个股票的资金流向 — 走标准优先级链 (Tushare→BaoStock→AKShare)"""
         results: dict[str, list[FundFlow]] = {}
         with ThreadPoolExecutor(max_workers=max_workers) as pool:
             futures = {pool.submit(self.get_fund_flow, c, days): c for c in codes}
+            for future in as_completed(futures):
+                code = futures[future]
+                try:
+                    results[code] = future.result(timeout=self._config.request_timeout * 2)
+                except Exception:
+                    results[code] = []
+            del futures
+        return results
+
+    def batch_market_snapshot(self) -> list[MarketSnapshot]:
+        """获取全市场快照 (已存在，别名兼容)"""
+        return self.get_market_snapshot()
+
+    def batch_northbound_stocks(
+        self, codes: list[str], days: int = 10, max_workers: int = 6
+    ) -> dict[str, list[dict]]:
+        """并发获取多个股票的北向资金持仓变化 — 走标准优先级链"""
+        results: dict[str, list[dict]] = {}
+        with ThreadPoolExecutor(max_workers=max_workers) as pool:
+            futures = {pool.submit(self.get_northbound_stock, c, days): c for c in codes}
+            for future in as_completed(futures):
+                code = futures[future]
+                try:
+                    results[code] = future.result(timeout=self._config.request_timeout * 2)
+                except Exception:
+                    results[code] = []
+            del futures
+        return results
+
+    def batch_financials(
+        self, codes: list[str], max_workers: int = 4
+    ) -> dict[str, list[FinancialIndicator]]:
+        """并发获取多个股票的深度财务指标 — 走标准优先级链"""
+        results: dict[str, list[FinancialIndicator]] = {}
+        with ThreadPoolExecutor(max_workers=max_workers) as pool:
+            futures = {pool.submit(self.get_financial_indicators, c): c for c in codes}
+            for future in as_completed(futures):
+                code = futures[future]
+                try:
+                    results[code] = future.result(timeout=self._config.request_timeout * 3)
+                except Exception:
+                    results[code] = []
+            del futures
+        return results
+
+    def batch_shareholders(
+        self, codes: list[str], max_workers: int = 6
+    ) -> dict[str, list]:
+        """并发获取多个股票的股东人数变化 (筹码集中度) — 走标准优先级链"""
+        results: dict[str, list[ShareholderCount]] = {}
+        with ThreadPoolExecutor(max_workers=max_workers) as pool:
+            futures = {pool.submit(self.get_shareholder_count, c): c for c in codes}
             for future in as_completed(futures):
                 code = futures[future]
                 try:
