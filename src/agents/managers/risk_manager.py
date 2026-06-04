@@ -144,6 +144,36 @@ class RiskManager:
                 elif unlock_pct > 0.5:
                     risk_flags.append(f"近期限售解禁 {unlock_pct:.1f}% (占总股本)，继续关注")
 
+            # 涨跌停检查 (价格触及涨跌停时禁止买入)
+            price = self._get_latest_price(v.code, daily_data)
+            price_limit_flag = self._check_price_limit(v.code, daily_data)
+            if price_limit_flag:
+                final_pct = 0.0
+                risk_flags.append(price_limit_flag)
+
+            # ST/*ST 检查 (从stock_infos中检测)
+            if stock_infos and v.code in stock_infos:
+                info = stock_infos.get(v.code, {})
+                stock_name = info.get("name", "")
+                if "ST" in stock_name.upper():
+                    final_pct = 0.0
+                    risk_flags.append(f"ST/*ST 标记: {stock_name}")
+
+            # 上市天数检查 (次新股风控)
+            if stock_infos and v.code in stock_infos:
+                info = stock_infos.get(v.code, {})
+                list_date = info.get("list_date", "")
+                if list_date:
+                    from datetime import datetime
+                    try:
+                        ld = datetime.strptime(str(list_date), "%Y%m%d")
+                        listing_days = (datetime.now() - ld).days
+                        if listing_days < self._cfg.min_listing_days:
+                            final_pct *= 0.5
+                            risk_flags.append(f"次新股 (上市{listing_days}天, <{self._cfg.min_listing_days}天)")
+                    except ValueError:
+                        pass
+
             # 计算最大股数 (向下取 100 的整数倍)
             max_value = self._capital * final_pct
             price = self._get_latest_price(v.code, daily_data)
@@ -301,6 +331,23 @@ class RiskManager:
         pcts_a = [dates_a[d] for d in common]
         pcts_b = [dates_b[d] for d in common]
         return _pearson(pcts_a, pcts_b)
+
+    @staticmethod
+    def _check_price_limit(code: str, daily_data: dict[str, list[Any]]) -> str:
+        """检查是否触及涨跌停 (触及涨停的不能买入，触及跌停的也要排除)"""
+        records = daily_data.get(code, [])
+        if len(records) < 2:
+            return ""
+        latest = records[-1]
+        prev = records[-2] if len(records) >= 2 else latest  # fallback for single record
+        pct_chg = getattr(latest, "pct_chg", 0.0)
+        # A股主板涨跌停为 ±10%, 创业板/科创板为 ±20%
+        # 保守起见, 涨幅 >= 9.5% 视为涨停, 跌幅 <= -9.5% 视为跌停
+        if pct_chg >= 9.5:
+            return f"触及涨停 ({pct_chg:+.1f}%), 不建议追涨买入"
+        if pct_chg <= -9.5:
+            return f"触及跌停 ({pct_chg:+.1f}%), 流动性风险"
+        return ""
 
     @staticmethod
     def _check_turnover(code: str, daily_data: dict[str, list[Any]]) -> str:

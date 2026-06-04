@@ -34,6 +34,8 @@ from ..agents.analysts.technical import TechnicalAnalyst
 from ..agents.analysts.fundamentals import FundamentalsAnalyst
 from ..agents.analysts.fund_flow import FundFlowAnalyst
 from ..agents.analysts.news_sentiment import NewsSentimentAnalyst
+from ..agents.analysts.policy import PolicyAnalyst
+from ..agents.analysts.sector_hunter import SectorHunterAnalyst
 from ..agents.analysts.etf import ETFAnalyst
 from ..agents.researchers.engine import DebateEngine
 from ..agents.managers.research_manager import ResearchManager
@@ -206,8 +208,9 @@ def _map_etf_signal(signal: str) -> str:
 
 
 def run_analysis(state: PipelineState) -> dict[str, Any]:
-    """阶段 2: 深度分析 — 四分析师 + 辩论 + 研究主管研判"""
+    """阶段 2: 深度分析 — 六分析师 + 竞赛筛选 + 辩论 + 研究主管研判"""
     t0 = time.monotonic()
+    cfg = get_config()
     logger.info("===== 阶段 2/4: 深度分析 (%d 只) =====", len(state.candidates))
 
     if not state.candidates:
@@ -219,14 +222,22 @@ def run_analysis(state: PipelineState) -> dict[str, Any]:
     engine = DebateEngine(quick_llm)
     research_mgr = ResearchManager(deep_llm)
 
+    # 六位分析师 (4 核心 + 2 增强)
     analysts = [
         TechnicalAnalyst(quick_llm, data),
         FundamentalsAnalyst(quick_llm, data),
         FundFlowAnalyst(quick_llm, data),
         NewsSentimentAnalyst(quick_llm, data),
     ]
+    if cfg.enable_policy_analyst:
+        analysts.append(PolicyAnalyst(quick_llm, data))
+    if cfg.enable_sector_hunter:
+        analysts.append(SectorHunterAnalyst(quick_llm, data))
 
-    def analyze_single(candidate) -> tuple[str, list, DebateResult, Any]:
+    logger.info("分析师团队: %d 位 (%s)", len(analysts),
+                "4核心+2增强" if len(analysts) == 6 else "仅核心")
+
+    def analyze_single(candidate) -> tuple[str, list, DebateResult, Any, dict]:
         code = candidate.code
         name = candidate.name
 
@@ -238,11 +249,35 @@ def run_analysis(state: PipelineState) -> dict[str, Any]:
             except Exception as e:
                 logger.warning("%s 分析师 %s 失败: %s", code, a.analyst_type, e)
 
+        # ── 竞赛机制 (ContestTrade 风格) ──
+        # 统计各分析师的看多/看空/中性票数
+        bull_count = sum(1 for r in reports if r.signal == "bullish")
+        bear_count = sum(1 for r in reports if r.signal == "bearish")
+        total_reports = len(reports)
+        consensus_score = (bull_count - bear_count) / max(total_reports, 1)
+
+        # 共识达成判定: 至少 consensus_threshold 位分析师看多 且 无看空
+        consensus_threshold = cfg.competition_consensus_threshold
+        passed = (bull_count >= consensus_threshold and bear_count == 0) if cfg.enable_competition_scoring else True
+
+        comp_score = {
+            "analyst_votes": bull_count,
+            "total_analysts": total_reports,
+            "consensus_score": round(consensus_score, 2),
+            "passed": passed,
+        }
+
+        if not passed:
+            return code, reports, DebateResult(code=code, name=name), ResearchVerdict(
+                code=code, name=name, direction="hold", confidence=0.0,
+                core_reasoning=f"竞赛筛选未通过: {bull_count}/{total_reports}看多, {bear_count}看空 (需≥{consensus_threshold}看多且0看空)",
+            ), comp_score
+
         if len(reports) < 2:
             return code, reports, DebateResult(code=code, name=name), ResearchVerdict(
                 code=code, name=name, direction="hold", confidence=0.0,
                 core_reasoning="分析报告不足",
-            )
+            ), comp_score
 
         try:
             debate = engine.debate(code, name, reports)
@@ -258,11 +293,12 @@ def run_analysis(state: PipelineState) -> dict[str, Any]:
             logger.warning("%s 研究主管研判失败: %s", code, e)
             verdict = ResearchVerdict(code=code, name=name, direction="hold", confidence=0.0, core_reasoning=str(e))
 
-        return code, reports, debate, verdict
+        return code, reports, debate, verdict, comp_score
 
     analyst_reports: dict = {}
     debates: dict = {}
     verdicts: dict = {}
+    competition_scores: dict = {}
     errors: list[str] = list(state.errors)
 
     max_workers = max(1, min(len(state.candidates), 4))
@@ -270,15 +306,22 @@ def run_analysis(state: PipelineState) -> dict[str, Any]:
         futures = {pool.submit(analyze_single, c): c for c in state.candidates}
         for future in as_completed(futures):
             try:
-                code, reports, debate, verdict = future.result()
+                code, reports, debate, verdict, comp_score = future.result()
                 analyst_reports[code] = reports
                 debates[code] = debate
                 verdicts[code] = verdict
+                competition_scores[code] = comp_score
             except Exception as e:
                 c = futures[future]
                 logger.exception("%s 分析全链路失败: %s", c.code, e)
                 errors.append(f"{c.code} 分析失败: {e}")
         del futures
+
+    # 竞赛筛选统计
+    if cfg.enable_competition_scoring:
+        passed_count = sum(1 for s in competition_scores.values() if s.get("passed"))
+        logger.info("竞赛筛选: %d/%d 通过共识门槛 (需≥%d位分析师看多)",
+                    passed_count, len(competition_scores), cfg.competition_consensus_threshold)
 
     elapsed = dict(state.elapsed)
     elapsed["analysis"] = time.monotonic() - t0
@@ -288,6 +331,7 @@ def run_analysis(state: PipelineState) -> dict[str, Any]:
         "analyst_reports": analyst_reports,
         "debates": debates,
         "verdicts": verdicts,
+        "competition_scores": competition_scores,
         "errors": errors,
         "stage": "analysis_done",
         "elapsed": elapsed,

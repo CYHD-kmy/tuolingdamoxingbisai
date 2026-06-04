@@ -183,6 +183,8 @@ class BaseAnalyst(ABC):
             "fundamentals": fallback_fundamentals_report,
             "fund_flow": fallback_fund_flow_report,
             "news": fallback_news_report,
+            "policy": fallback_news_report,        # 政策面降级复用消息面
+            "sector_hunter": fallback_fund_flow_report,  # 板块猎手降级复用资金面
         }
         fn = fallback_map.get(self.analyst_type)
         if fn:

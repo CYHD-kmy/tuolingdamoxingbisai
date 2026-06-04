@@ -78,6 +78,10 @@ class Config:
     open_loss_filter_pct: float = -5.0
     broad_decline_threshold: int = 3000
 
+    # ATR 止损
+    atr_period: int = 14
+    atr_stop_multiplier: float = 3.0
+
     @property
     def max_single_position(self) -> float:
         return self.core_single_pct
@@ -105,6 +109,32 @@ class Config:
     # ── 辩论 ────────────────────────────────────
     max_debate_rounds: int = 3
     max_analyst_tool_calls: int = 3
+
+    # ── 增强分析模块 ───────────────────────────
+    # 新增分析师 (政策面 + 板块猎手)
+    enable_policy_analyst: bool = True
+    enable_sector_hunter: bool = True
+
+    # 市场情绪分析
+    enable_market_sentiment: bool = True
+    broad_decline_threshold: int = 3000
+    broad_advance_threshold: int = 3000
+
+    # 集合竞价
+    enable_auction_analysis: bool = True
+
+    # 龙虎榜
+    enable_dragon_tiger: bool = True
+
+    # 涨停分析
+    enable_limit_up_analysis: bool = True
+
+    # 量价关系
+    enable_volume_price: bool = True
+
+    # 内部竞赛机制 (ContestTrade 风格)
+    enable_competition_scoring: bool = True
+    competition_consensus_threshold: int = 3  # 至少 N 个分析师看好才进入辩论
 
     # ── ETF ──────────────────────────────────────
     etf_enabled: bool = True

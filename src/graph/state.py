@@ -54,8 +54,17 @@ class PipelineState:
     position_limits: dict[str, PositionLimit] = field(default_factory=dict)
     final_result: PortfolioResult | None = None
 
-    # ── 市场环境 ──────────────────────────────
+    # ── 市场环境 (增强版) ──────────────────────
     market_regime: str = "neutral"  # "bull" / "neutral" / "bear"
+    market_sentiment: Any = None    # MarketSentimentResult
+    sector_heats: list[Any] = field(default_factory=list)  # 板块热度排行
+    auction_signals: list[Any] = field(default_factory=list)  # 集合竞价强势信号
+    limit_up_signals: list[Any] = field(default_factory=list)  # 涨停信号
+    dragon_tiger_signals: list[Any] = field(default_factory=list)  # 龙虎榜信号
+
+    # ── 竞赛评分 ──────────────────────────────
+    # {code: {"analyst_votes": int, "consensus_score": float, "passed": bool}}
+    competition_scores: dict[str, dict] = field(default_factory=dict)
 
     # ── 元信息 ────────────────────────────────
     stage: str = "init"
