@@ -83,21 +83,22 @@ def test_risk_manager_drawdown_check():
 # ── 数据模型测试 ────────────────────────────
 
 def test_final_decision_to_dict():
-    """FinalDecision.to_dict() 输出正确格式"""
+    """FinalDecision.to_dict() 输出比赛标准格式: symbol/symbol_name/volume"""
     d = FinalDecision(symbol="600519", symbol_name="茅台", volume=200)
     result = d.to_dict()
-    assert result == {"symbol": "600519", "symbol_name": "茅台", "volume": 200, "direction": "buy"}
+    assert result == {"symbol": "600519", "symbol_name": "茅台", "volume": 200}
+    # 不包含 direction — 比赛平台自动结算卖出，智能体仅输出买入
 
 
 def test_final_decision_to_dict_competition_format():
-    """to_dict() 输出赛道标准四字段: symbol/symbol_name/volume/direction"""
+    """to_dict() 输出赛道标准三字段: symbol/symbol_name/volume"""
     d = FinalDecision(symbol="600519", symbol_name="茅台", volume=200, entry_price=1680.50)
     result = d.to_dict()
-    assert result == {"symbol": "600519", "symbol_name": "茅台", "volume": 200, "direction": "buy"}
+    assert result == {"symbol": "600519", "symbol_name": "茅台", "volume": 200}
 
     d2 = FinalDecision(symbol="000858", symbol_name="五粮液", volume=500, entry_price=0.0)
     result2 = d2.to_dict()
-    assert result2 == {"symbol": "000858", "symbol_name": "五粮液", "volume": 500, "direction": "buy"}
+    assert result2 == {"symbol": "000858", "symbol_name": "五粮液", "volume": 500}
 
     # entry_price 始终保留在 dataclass 属性上 (内部追踪用)
     assert d.entry_price == 1680.50

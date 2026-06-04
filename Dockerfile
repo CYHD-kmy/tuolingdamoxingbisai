@@ -16,6 +16,4 @@ COPY . .
 # 创建必要目录
 RUN mkdir -p logs results
 
-EXPOSE 8000
-
-CMD ["python", "-m", "uvicorn", "src.api.server:app", "--host", "0.0.0.0", "--port", "8000", "--log-level", "info"]
+CMD ["python", "-m", "src.main"]

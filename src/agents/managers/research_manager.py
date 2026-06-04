@@ -93,26 +93,6 @@ class ResearchManager:
         report_text = self._format_reports(reports)
         debate_text = debate_result_to_text(debate)
 
-        # 尝试检索历史相似行情
-        memory_context = ""
-        try:
-            from ...memory import MemoryStore
-            store = MemoryStore()
-            if store.available:
-                query = _build_memory_query(code, name, reports, current_price)
-                similar = store.search_similar(query, k=3)
-                if similar:
-                    memory_lines = [f"\n## 历史相似行情 (共{len(similar)}条, 供置信度校准参考)"]
-                    for s in similar:
-                        memory_lines.append(
-                            f"- {s['date']}: 方向={s['direction']}, "
-                            f"持仓{s['position_count']}只, 日收益{s['return_pct']}%, "
-                            f"相似度={s['similarity']:.0%}"
-                        )
-                    memory_context = "\n".join(memory_lines)
-        except Exception:
-            pass  # 记忆不可用不影响主流程
-
         user_prompt = f"""## 股票: {name} ({code})
 当前价格: {current_price:.2f}
 
@@ -121,7 +101,6 @@ class ResearchManager:
 
 ## 多空辩论记录
 {debate_text}
-{memory_context}
 请基于以上信息，给出最终研究结论。"""
 
         messages = [
@@ -174,21 +153,3 @@ class ResearchManager:
             core_reasoning=data.get("core_reasoning", data.get("verdict_summary", ""))[:300],
             key_risks=data.get("key_risks", []),
         )
-
-
-def _build_memory_query(code: str, name: str, reports: list[AnalystReport], price: float) -> str:
-    """构建记忆搜索查询文本"""
-    signals = [r.signal for r in reports]
-    signal_desc = f"技术面{signals[0] if len(signals)>0 else 'neutral'} "
-    signal_desc += f"基本面{signals[1] if len(signals)>1 else 'neutral'} "
-    signal_desc += f"资金面{signals[2] if len(signals)>2 else 'neutral'} "
-    signal_desc += f"消息面{signals[3] if len(signals)>3 else 'neutral'}"
-
-    bullish = sum(1 for s in signals if s == "bullish")
-    bearish = sum(1 for s in signals if s == "bearish")
-
-    return (
-        f"股票 {name} {code} 价格{price:.2f} "
-        f"四维信号: {signal_desc} "
-        f"{bullish}个看多 {bearish}个看空"
-    )

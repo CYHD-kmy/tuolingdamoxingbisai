@@ -75,12 +75,11 @@ class FinalDecision:
     direction: str = "buy"     # "buy" / "sell"
 
     def to_dict(self) -> dict:
-        """返回赛道标准 JSON 格式: symbol / symbol_name / volume / direction"""
+        """返回赛道标准 JSON 格式: symbol / symbol_name / volume"""
         return {
             "symbol": self.symbol,
             "symbol_name": self.symbol_name,
             "volume": self.volume,
-            "direction": self.direction,
         }
 
 

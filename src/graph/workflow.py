@@ -19,7 +19,6 @@ LangGraph 工作流 — 基于 StateGraph 的日内投资决策流水线。
 from __future__ import annotations
 
 import logging
-import os
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
@@ -40,7 +39,6 @@ from ..agents.researchers.engine import DebateEngine
 from ..agents.managers.research_manager import ResearchManager
 from ..agents.managers.risk_manager import RiskManager
 from ..agents.managers.portfolio_manager import PortfolioManager
-from ..agents.regime_detector import RegimeDetector
 from ..screening.etf_screener import ETFScreener
 from ..utils.config import get_config
 
@@ -58,65 +56,7 @@ def run_screening(state: PipelineState) -> dict[str, Any]:
     pipeline = ScreeningPipeline(data)
 
     try:
-        cfg = get_config()
-        strategy_name = cfg.active_strategies
-
-        if strategy_name and strategy_name != "default":
-            # 多策略竞争模式
-            from ..strategies.engine import CompetitionEngine
-            from ..strategies.registry import StrategyRegistry
-            from ..strategies.base import StrategyResult
-
-            snapshots = data.get_market_snapshot()
-            if not snapshots:
-                result = pipeline.run()
-            else:
-                engine = CompetitionEngine(
-                    strategies=None if strategy_name == "all" else strategy_name.split(","),
-                )
-                daily_all = data.batch_daily_data(
-                    [s.code for s in snapshots[:100]], days=30, max_workers=8,
-                )
-                flows_all = data.batch_fund_flows(
-                    [s.code for s in snapshots[:100]], days=5, max_workers=8,
-                )
-                comp_result = engine.run(snapshots, daily_all, flows_all)
-                from ..screening.pipeline import ScreeningResult
-                result = ScreeningResult(
-                    candidates=comp_result.merged_candidates[:cfg.max_candidates],
-                    total_screened=len(snapshots),
-                    after_filters=len(comp_result.merged_candidates),
-                    elapsed_filter=0,
-                    elapsed_score=comp_result.strategy_results.get("momentum", StrategyResult(name="")).metadata.get("elapsed", 0),
-                )
-        else:
-            result = pipeline.run()
-
-        # Transformer 评分增强
-        if cfg.transformer_enabled and cfg.transformer_model_path:
-            try:
-                from ..transformer import TransformerScorer, StockTransformer
-
-                tf_model = StockTransformer.load(cfg.transformer_model_path)
-                tf_scorer = TransformerScorer(tf_model, score_weight=cfg.transformer_scorer_weight)
-                tf_scores = tf_scorer.score_all(
-                    [c.code for c in result.candidates],
-                    data.batch_daily_data([c.code for c in result.candidates], days=30, max_workers=6),
-                )
-                tf_map = {fs.code: fs.composite for fs in tf_scores}
-                for c in result.candidates:
-                    if c.code in tf_map:
-                        tf_score = tf_map[c.code]
-                        c.scores["transformer"] = round(tf_score, 1)
-                        c.composite = round(
-                            c.composite * (1 - cfg.transformer_scorer_weight)
-                            + tf_score * cfg.transformer_scorer_weight,
-                            1,
-                        )
-                logger.info("Transformer 评分已融合: %d 只 (权重=%.0f%%)",
-                            len(tf_map), cfg.transformer_scorer_weight * 100)
-            except Exception:
-                logger.debug("Transformer 评分增强失败", exc_info=True)
+        result = pipeline.run()
 
         updates: dict[str, Any] = {
             "candidates": result.candidates,
@@ -127,31 +67,8 @@ def run_screening(state: PipelineState) -> dict[str, Any]:
         if codes:
             updates["daily_data"] = data.batch_daily_data(codes, days=30, max_workers=6)
             updates["fund_flows"] = data.batch_fund_flows(codes, days=5, max_workers=6)
-            # 捕获数据质量标记
-            quality: dict[str, str] = {}
-            for c in codes:
-                for dt in ("daily", "fund_flow"):
-                    q = data.get_data_quality(c, dt)
-                    if q:
-                        quality[f"{c}:{dt}"] = q
-            updates["data_quality"] = quality
 
         updates["stage"] = "screening_done"
-
-        # 市场环境检测
-        try:
-            cfg_detect = get_config()
-            index_data = data.get_daily_data(cfg_detect.regime_index_code, days=60)
-            if index_data:
-                detector = RegimeDetector(
-                    lookback=cfg_detect.regime_lookback_days,
-                    index_code=cfg_detect.regime_index_code,
-                )
-                regime = detector.detect(index_data)
-                updates["market_regime"] = str(regime)
-                logger.info("市场环境: %s", regime)
-        except Exception:
-            logger.debug("市场环境检测失败，默认中性", exc_info=True)
 
         logger.info("筛选完成: %d 只候选", len(result.candidates))
     except Exception as e:
@@ -262,7 +179,6 @@ def run_etf_risk(state: PipelineState) -> dict[str, Any]:
         elapsed["etf_risk"] = 0
         return {"stage": "etf_risk_skipped", "elapsed": elapsed}
 
-    cfg = get_config()
     risk_mgr = RiskManager(total_capital=state.total_capital)
     etf_limits = risk_mgr.compute_etf_limits(
         list(state.etf_verdicts.values()),
@@ -383,8 +299,6 @@ def run_risk(state: PipelineState) -> dict[str, Any]:
     t0 = time.monotonic()
     logger.info("===== 阶段 3/4: 风控计算 =====")
 
-    cfg = get_config()
-
     verdicts = list(state.verdicts.values())
     if not verdicts:
         return {"stage": "risk_skipped"}
@@ -401,8 +315,6 @@ def run_risk(state: PipelineState) -> dict[str, Any]:
         logger.info("行业映射: %d 只", len(industry_map))
 
     risk_mgr = RiskManager(total_capital=state.total_capital)
-    # 传入当前已买入股票作为 current_positions，使行业集中度检查生效
-    current_positions = _build_current_positions(state)
 
     # 获取限售解禁数据
     unlock_map: dict[str, float] = {}
@@ -416,34 +328,11 @@ def run_risk(state: PipelineState) -> dict[str, Any]:
     except Exception:
         logger.debug("限售解禁数据获取失败，跳过")
 
-    # 可选: 加载 RL 模型生成交易信号
-    rl_signals = None
-    if cfg.rl_enabled or cfg.rl_model_path:
-        try:
-            from ..rl.agent import DQNAgent
-            agent = DQNAgent()
-            model_path = cfg.rl_model_path or os.path.join(cfg.results_dir, "rl_model.json")
-            if os.path.exists(model_path):
-                agent.load(model_path)
-                rl_signals = {}
-                for v in verdicts:
-                    records = state.daily_data.get(v.code, [])
-                    if len(records) >= 20:
-                        signal = agent.infer(records)
-                        conf = agent.get_q_confidence(records)
-                        rl_signals[v.code] = (signal, conf)
-                logger.info("RL 信号已生成: %d 只股票", len(rl_signals))
-            else:
-                logger.debug("RL 模型文件 %s 不存在，跳过", model_path)
-        except Exception:
-            logger.debug("RL 信号生成失败", exc_info=True)
-
     limits = risk_mgr.compute_limits(
-        verdicts, state.daily_data, current_positions,
+        verdicts, state.daily_data,
         industry_map=industry_map or None,
         unlock_shares=unlock_map or None,
-        rl_signals=rl_signals,
-        market_regime=state.market_regime,
+        stock_infos=stock_infos or None,
     )
 
     elapsed = dict(state.elapsed)
@@ -460,7 +349,7 @@ def run_risk(state: PipelineState) -> dict[str, Any]:
 
 
 def run_portfolio(state: PipelineState) -> dict[str, Any]:
-    """阶段 4: 组合构建 — 最终买卖决策 (股票 + ETF 混合)"""
+    """阶段 4: 组合构建 — 买入决策 (股票 + ETF)"""
     t0 = time.monotonic()
     cfg = get_config()
     logger.info("===== 阶段 4/4: 组合构建 =====")
@@ -476,12 +365,7 @@ def run_portfolio(state: PipelineState) -> dict[str, Any]:
     deep_llm = get_deep_llm()
     portfolio_mgr = PortfolioManager(deep_llm)
 
-    # 使用实际可用现金
-    current_positions = _build_current_positions(state)
     cash_available = max(0.0, state.available_cash)
-
-    # 构建完整的持仓上下文 (供 LLM 和风控使用)
-    portfolio_context = _build_portfolio_context(state, cash_available)
 
     # ETF 专用资金比例
     etf_budget = cash_available * cfg.etf_max_allocation if has_etf else 0.0
@@ -490,7 +374,7 @@ def run_portfolio(state: PipelineState) -> dict[str, Any]:
     all_decisions: list = []
     total_cash_used = 0.0
 
-    # ETF 分配 (ETF 不需要复杂的持仓上下文)
+    # ETF 分配 (确定性规则，不消耗 LLM)
     if has_etf:
         etf_result = portfolio_mgr.construct_etf(
             etf_verdicts, state.etf_position_limits, state.daily_data,
@@ -500,15 +384,13 @@ def run_portfolio(state: PipelineState) -> dict[str, Any]:
         all_decisions.extend(etf_result.decisions)
         total_cash_used += etf_result.cash_used
 
-    # 股票分配 (使用完整的持仓上下文)
+    # 股票分配 (LLM 驱动买入决策)
     if has_stock:
         stock_cash = cash_available - total_cash_used
         stock_result = portfolio_mgr.construct(
             stock_verdicts, state.position_limits, state.daily_data,
             cash_available=max(0, stock_cash),
             total_capital=state.total_capital,
-            portfolio_context=portfolio_context,
-            market_regime=state.market_regime,
         )
         all_decisions.extend(stock_result.decisions)
         total_cash_used += stock_result.cash_used
@@ -517,18 +399,14 @@ def run_portfolio(state: PipelineState) -> dict[str, Any]:
         decisions=all_decisions,
         cash_used=total_cash_used,
         cash_remaining=cash_available - total_cash_used,
-        total_positions=len(all_decisions),
-        sell_proceeds=getattr(stock_result, "sell_proceeds", 0.0) if has_stock else 0.0,
-        target_allocations=getattr(stock_result, "target_allocations", []) if has_stock else [],
     )
 
     elapsed = dict(state.elapsed)
     elapsed["portfolio"] = time.monotonic() - t0
 
     buy_count = sum(1 for d in all_decisions if getattr(d, "direction", "buy") == "buy")
-    sell_count = sum(1 for d in all_decisions if getattr(d, "direction", "buy") == "sell")
-    logger.info("组合构建完成: %d 笔决策 (买 %d + 卖 %d), 使用资金 ¥%.0f",
-                len(all_decisions), buy_count, sell_count, total_cash_used)
+    logger.info("组合构建完成: %d 笔买入决策, 使用资金 ¥%.0f",
+                buy_count, total_cash_used)
 
     return {
         "final_result": final,
@@ -604,37 +482,31 @@ def _build_graph() -> StateGraph:
 
     workflow.set_entry_point("screening")
 
-    # screening → etf_screening (or analysis)
     workflow.add_conditional_edges("screening", _after_screening, {
         "etf_screening": "etf_screening",
         "analysis": "analysis",
         END: END,
     })
 
-    # etf_screening → etf_analysis (or skip to analysis)
     workflow.add_conditional_edges("etf_screening", _after_etf_screening, {
         "etf_analysis": "etf_analysis",
         "analysis": "analysis",
     })
 
-    # etf_analysis → etf_risk (or skip to analysis)
     workflow.add_conditional_edges("etf_analysis", _after_etf_analysis, {
         "etf_risk": "etf_risk",
         "analysis": "analysis",
     })
 
-    # etf_risk → analysis
     workflow.add_conditional_edges("etf_risk", _after_etf_risk, {
         "analysis": "analysis",
     })
 
-    # analysis → risk (or END)
     workflow.add_conditional_edges("analysis", _after_analysis, {
         "risk": "risk",
         END: END,
     })
 
-    # risk → portfolio (or END)
     workflow.add_conditional_edges("risk", _after_risk, {
         "portfolio": "portfolio",
         END: END,
@@ -660,31 +532,26 @@ def _get_graph():
 def run_pipeline(
     total_capital: float = 500_000.0,
     available_cash: float = 500_000.0,
-    current_holdings: dict[str, int] | None = None,
 ) -> PipelineState:
     """
     执行完整的日内投资决策流水线。
 
     基于 LangGraph StateGraph 编排，支持条件路由:
       screening → analysis → risk → portfolio → END
-                          ↑ 无候选/无研判/无仓位时提前终止
 
     参数:
-        total_capital: 初始总资金 (用于报告展示)
-        available_cash: 当前实际可用现金 (跨日后可能 < total_capital)
-        current_holdings: 当前持仓 {code: shares}
+        total_capital: 总资金 (用于风控计算)
+        available_cash: 当日可用现金
 
     返回: 包含所有阶段结果的 PipelineState
     """
     initial_state = PipelineState(
         total_capital=total_capital,
         available_cash=available_cash,
-        current_holdings=current_holdings or {},
     )
     app = _get_graph()
     result = app.invoke(initial_state)
 
-    # LangGraph 可能返回 dict，统一转回 PipelineState
     if isinstance(result, dict):
         from dataclasses import fields
         field_names = {f.name for f in fields(PipelineState)}
@@ -695,65 +562,6 @@ def run_pipeline(
     _print_summary(result)
 
     return result
-
-
-# ── 辅助 ──────────────────────────────────────
-
-def _build_current_positions(state: PipelineState) -> dict[str, int]:
-    """加载当前持仓: 优先使用 state.current_holdings (由 main.py 传入), 否则从文件读取"""
-    if state.current_holdings:
-        logger.info("已加载持仓 (state): %d 只", len(state.current_holdings))
-        return state.current_holdings
-
-    from ..agents.portfolio_tracker import PortfolioTracker
-
-    config = get_config()
-    tracker = PortfolioTracker(
-        total_capital=state.total_capital,
-        results_dir=config.results_dir,
-    )
-    tracker.load()
-    positions = tracker.current_positions_dict()
-    if positions:
-        logger.info("已加载持仓 (文件): %d 只, 现金 %.0f", len(positions), tracker.cash)
-    return positions
-
-
-def _build_portfolio_context(
-    state: PipelineState,
-    cash_available: float,
-) -> dict[str, Any] | None:
-    """
-    构建完整的持仓上下文 (供 LLM 策略使用)。
-
-    优先使用 state.current_holdings 中已有信息, 补全 daily_data 中的最新市价。
-    如果无持仓则返回 None。
-    """
-    from ..agents.portfolio_tracker import PortfolioTracker, Position
-
-    config = get_config()
-    tracker = PortfolioTracker(
-        total_capital=state.total_capital,
-        results_dir=config.results_dir,
-    )
-    tracker.load()
-    tracker.cash = cash_available
-
-    if not tracker.positions:
-        return None
-
-    # 更新市价
-    tracker.update_prices(state.daily_data)
-    # 计算 ATR 止损并更新
-    try:
-        risk_mgr = RiskManager()
-        atr_stops = risk_mgr.compute_stop_levels(tracker.positions, state.daily_data)
-        if atr_stops:
-            tracker.update_trailing_stops(state.daily_data, atr_stops)
-    except Exception:
-        logger.debug("ATR止损计算失败", exc_info=True)
-
-    return tracker.build_context(state.daily_data)
 
 
 def _print_summary(state) -> None:

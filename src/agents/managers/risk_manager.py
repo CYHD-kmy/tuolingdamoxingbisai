@@ -39,54 +39,35 @@ class RiskManager:
         self,
         verdicts: list[ResearchVerdict],
         daily_data: dict[str, list[Any]],
-        current_positions: dict[str, int],
+        current_positions: dict[str, int] | None = None,
         industry_map: dict[str, str] | None = None,
         unlock_shares: dict[str, float] | None = None,
-        rl_signals: dict[str, tuple[str, float]] | None = None,
-        market_regime: str = "neutral",
         stock_infos: dict[str, dict] | None = None,
     ) -> dict[str, PositionLimit]:
         """
-        为每个候选股计算仓位上限 (支持三级仓位分层)。
+        为每个候选股计算仓位上限。
 
         verdicts: 研究主管的研判结论
         daily_data: {code: [StockDaily, ...]} 用于计算波动率
-        current_positions: 当前持仓 {code: shares}
+        current_positions: 当前持仓 {code: shares} (比赛日均为空)
         industry_map: {code: industry_name} 可选，用于行业集中度
         unlock_shares: {code: unlock_ratio_pct} 可选，近期限售解禁占比
         stock_infos: {code: {pe, total_mv, ...}} 可选，用于分层分类
 
         返回: {code: PositionLimit}
         """
-        from ...review.risk_checker import classify_tier
-
         limits: dict[str, PositionLimit] = {}
-
-        # 熊市强制空仓
-        if market_regime == "bear":
-            for v in verdicts:
-                limits[v.code] = PositionLimit(
-                    code=v.code, name=v.name,
-                    max_position_pct=0, max_shares=0, max_value=0,
-                    volatility=0, risk_flags=["熊市: 强制空仓"],
-                )
-            return limits
-
+        current_positions = current_positions or {}
         stock_infos = stock_infos or {}
 
         for v in verdicts:
-            # 1. 分层基础仓位: 核心 vs 卫星
-            info = stock_infos.get(v.code, {})
-            tier = classify_tier(
-                code=v.code,
-                composite_score=v.confidence * 100,  # 置信度×100 作为得分的近似
-                pe=info.get("pe", 0),
-                market_cap=info.get("total_mv", 0),
-            )
-            if tier == "core":
+            # 1. 分层基础仓位: 核心 vs 卫星 (基于置信度简化判断)
+            if v.confidence >= 0.75:
                 base_pct = self._cfg.core_single_pct  # 40%
+                tier = "core"
             else:
                 base_pct = self._cfg.satellite_single_pct  # 14%
+                tier = "satellite"
 
             # 2. 波动率调整
             volatility = self._calc_volatility(v.code, daily_data)
@@ -113,29 +94,12 @@ class RiskManager:
                 )
                 continue
 
-            # 6. RL 信号调整 (可选: 增强 buy 信号的置信度)
-            if rl_signals and v.code in rl_signals:
-                rl_signal, rl_conf = rl_signals[v.code]
-                if rl_signal == "buy":
-                    conf_mult = min(1.5, conf_mult * (1.0 + rl_conf * self._cfg.rl_signal_weight))
-                elif rl_signal == "hold":
-                    conf_mult *= max(0.5, 1.0 - self._cfg.rl_signal_weight * 0.5)
-
             # 综合计算
             final_pct = base_pct * vol_mult * conf_mult * risk_mult
-
-            # 7. 市场环境调整
-            regime_mult = {
-                "bull": self._cfg.regime_bull_mult,
-                "neutral": 1.0,
-                "bear": self._cfg.regime_bear_mult,
-            }.get(market_regime, 1.0)
-            final_pct *= regime_mult
-
             final_pct = min(final_pct, base_pct)  # 分层硬上限
 
             # 行业集中度检查
-            risk_flags = []
+            risk_flags: list[str] = []
             if industry_map and v.code in industry_map:
                 industry = industry_map[v.code]
                 industry_codes = [c for c, ind in industry_map.items() if ind == industry]
@@ -148,7 +112,7 @@ class RiskManager:
                     final_pct *= 0.5
                     risk_flags.append(f"行业 {industry} 集中度超标")
 
-            # 相关性惩罚: 与已持仓股票高相关 (ρ > 0.7) → ×0.7，取最高相关性
+            # 相关性惩罚: 与已持仓股票高相关
             if current_positions:
                 max_corr = 0.0
                 max_corr_code = ""
@@ -168,7 +132,7 @@ class RiskManager:
             if turnover_warning:
                 risk_flags.append(turnover_warning)
 
-            # 限售解禁检查 (近期有大额解禁 → 减仓)
+            # 限售解禁检查
             if unlock_shares and v.code in unlock_shares:
                 unlock_pct = unlock_shares[v.code]
                 if unlock_pct > 5:
@@ -197,10 +161,6 @@ class RiskManager:
                 risk_flags=risk_flags,
                 tier=tier,
             )
-
-        # 6. 风险平价优化 (可选，覆盖等权分配)
-        if self._cfg.risk_parity_method != "equal":
-            limits = self._apply_risk_parity(limits, verdicts, daily_data)
 
         logger.info(
             "RiskManager: %d 个标的计算完毕, %d 可买入",
@@ -369,52 +329,6 @@ class RiskManager:
         if not records:
             return 0.0
         return records[-1].close
-
-    def _apply_risk_parity(
-        self,
-        limits: dict[str, PositionLimit],
-        verdicts: list[ResearchVerdict],
-        daily_data: dict[str, list[Any]],
-    ) -> dict[str, PositionLimit]:
-        """应用风险平价优化权重"""
-        try:
-            from ...optimization.risk_parity import RiskParityOptimizer, OptimizationMethod
-
-            method_map = {
-                "erc": OptimizationMethod.ERC,
-                "min_var": OptimizationMethod.MIN_VARIANCE,
-                "max_div": OptimizationMethod.MAX_DIVERSIFICATION,
-            }
-            method = method_map.get(self._cfg.risk_parity_method, OptimizationMethod.ERC)
-            optimizer = RiskParityOptimizer(method=method)
-
-            buy_codes = [v.code for v in verdicts if v.direction == "buy" and v.code in limits]
-            if len(buy_codes) < 2:
-                return limits
-
-            opt_result = optimizer.optimize(buy_codes, daily_data, limits)
-            if not opt_result.converged:
-                return limits
-
-            for code, weight in opt_result.weights.items():
-                if code in limits:
-                    old_pct = limits[code].max_position_pct
-                    new_pct = round(min(weight, old_pct), 4)
-                    limits[code].max_position_pct = new_pct
-                    limits[code].max_value = round(self._capital * new_pct, 2)
-                    price = self._get_latest_price(code, daily_data)
-                    if price > 0:
-                        limits[code].max_shares = int(
-                            limits[code].max_value / price / LOT_SIZE
-                        ) * LOT_SIZE
-
-            logger.info(
-                "RiskManager: 风险平价权重已应用 (方法=%s, %d 只)",
-                self._cfg.risk_parity_method, len(buy_codes),
-            )
-        except Exception:
-            logger.debug("风险平价优化失败，使用默认权重", exc_info=True)
-        return limits
 
     @staticmethod
     def _position_value(code: str, shares: int, daily_data: dict[str, list[Any]]) -> float:
