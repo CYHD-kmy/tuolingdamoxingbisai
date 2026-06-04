@@ -442,6 +442,45 @@ class UnifiedDataInterface:
                 continue
         return []
 
+    # ── 集合竞价 ──────────────────────────────
+
+    def get_auction_data(self, codes: list[str] | None = None) -> list[dict]:
+        """获取集合竞价数据 (开盘前调用)"""
+        for fetcher in self._fetchers:
+            try:
+                result = fetcher.get_auction_data(codes)
+                if result:
+                    return result
+            except Exception:
+                continue
+        return []
+
+    # ── 涨停板池 ──────────────────────────────
+
+    def get_limit_up_pool(self, date: str = "") -> list[dict]:
+        """获取当日涨停板股票池"""
+        for fetcher in self._fetchers:
+            try:
+                result = fetcher.get_limit_up_pool(date)
+                if result:
+                    return result
+            except Exception:
+                continue
+        return []
+
+    # ── 市场广度 ──────────────────────────────
+
+    def get_market_breadth(self) -> dict:
+        """获取全市场广度数据 (涨跌家数/涨停跌停数/成交额)"""
+        for fetcher in self._fetchers:
+            try:
+                result = fetcher.get_market_breadth()
+                if result:
+                    return result
+            except Exception:
+                continue
+        return {}
+
     # ── 龙虎榜深化 ────────────────────────────
 
     def get_dragon_tiger_stats(self, days: int = 10) -> list[dict]:

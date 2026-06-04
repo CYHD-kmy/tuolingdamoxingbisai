@@ -1130,6 +1130,133 @@ class AKShareFetcher:
         except Exception:
             return []
 
+    # ── 集合竞价 (新增) ────────────────────────
+
+    def get_auction_data(self, codes: list[str] | None = None) -> list[dict]:
+        """获取集合竞价数据 (开盘前调用)"""
+        try:
+            return self._retry(self._fetch_auction_data)
+        except Exception:
+            logger.exception("akshare: 获取集合竞价数据失败")
+            return []
+
+    def _fetch_auction_data(self) -> list[dict]:
+        import akshare as ak
+        try:
+            # 全市场实时行情包含开盘价和竞价相关字段
+            df = ak.stock_zh_a_spot_em()
+            if df is None or df.empty:
+                return []
+            result = []
+            for _, r in df.iterrows():
+                code = str(r.get("代码", ""))
+                name = str(r.get("名称", ""))
+                # 从实时行情提取竞价相关数据
+                open_price = float(r.get("今开", 0) or 0)
+                pre_close = float(r.get("昨收", 0) or 0)
+                volume = float(r.get("成交量", 0) or 0)
+                # 竞价量无法直接获取，用开盘量/换手率反推
+                result.append({
+                    "code": code,
+                    "name": name,
+                    "open": open_price,
+                    "pre_close": pre_close,
+                    "pct_chg": float(r.get("涨跌幅", 0) or 0),
+                    "volume": volume,
+                    "amount": float(r.get("成交额", 0) or 0),
+                    "turnover": float(r.get("换手率", 0) or 0),
+                    "volume_ratio": float(r.get("量比", 0) or 0),
+                })
+            return result
+        except Exception:
+            return []
+
+    # ── 涨停板池 (新增) ────────────────────────
+
+    def get_limit_up_pool(self, date: str = "") -> list[dict]:
+        """获取当日涨停板股票池"""
+        try:
+            return self._retry(self._fetch_limit_up_pool)
+        except Exception:
+            logger.exception("akshare: 获取涨停板池失败")
+            return []
+
+    def _fetch_limit_up_pool(self) -> list[dict]:
+        import akshare as ak
+        try:
+            df = ak.stock_zt_pool_em(date="")
+            if df is None or df.empty:
+                return []
+            return [
+                {
+                    "code": str(r.get("代码", "")),
+                    "name": str(r.get("名称", "")),
+                    "pct_chg": float(r.get("涨跌幅", 0) or 0),
+                    "limit_up_time": str(r.get("首次封板时间", "")),
+                    "open_count": int(r.get("炸板次数", 0) or 0),
+                    "limit_up_amt": float(r.get("封单额", 0) or 0),
+                    "turnover_rate": float(r.get("换手率", 0) or 0),
+                    "amount": float(r.get("成交额", 0) or 0),
+                    "reason": str(r.get("涨停原因", "")),
+                    "sector": str(r.get("所属行业", "")),
+                    "consecutive_days": int(r.get("连板数", 0) or 0),
+                }
+                for _, r in df.iterrows()
+            ]
+        except Exception:
+            return []
+
+    # ── 市场广度 (新增) ────────────────────────
+
+    def get_market_breadth(self) -> dict:
+        """获取全市场广度数据 (涨跌家数/涨停跌停数/成交额)"""
+        try:
+            return self._retry(self._fetch_market_breadth)
+        except Exception:
+            logger.exception("akshare: 获取市场广度失败")
+            return {}
+
+    def _fetch_market_breadth(self) -> dict:
+        import akshare as ak
+        try:
+            # 获取全市场个股实时行情来统计
+            df = ak.stock_zh_a_spot_em()
+            if df is None or df.empty:
+                return {}
+
+            up = 0
+            down = 0
+            flat = 0
+            limit_up = 0
+            limit_down = 0
+            total_volume = 0.0
+
+            for _, r in df.iterrows():
+                pct = float(r.get("涨跌幅", 0) or 0)
+                vol = float(r.get("成交额", 0) or 0)
+                total_volume += vol
+                if pct > 0:
+                    up += 1
+                elif pct < 0:
+                    down += 1
+                else:
+                    flat += 1
+                if pct >= 9.5:
+                    limit_up += 1
+                if pct <= -9.5:
+                    limit_down += 1
+
+            return {
+                "up_count": up,
+                "down_count": down,
+                "flat_count": flat,
+                "limit_up_count": limit_up,
+                "limit_down_count": limit_down,
+                "total_volume_yi": round(total_volume / 1e8, 2),
+            }
+        except Exception:
+            return {}
+
 
 # ── 技术指标计算 ────────────────────────────
 

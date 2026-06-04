@@ -203,6 +203,9 @@ class BaoStockFetcher:
     def get_market_activity(self) -> list:                        return []
     def get_block_trades(self, days: int = 10) -> list[dict]:     return []
     def get_dragon_tiger_stats(self, days: int = 10) -> list[dict]:  return []
+    def get_auction_data(self, codes=None) -> list[dict]:            return []
+    def get_limit_up_pool(self, date: str = "") -> list[dict]:       return []
+    def get_market_breadth(self) -> dict:                             return {}
 
 
 import atexit
