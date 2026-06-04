@@ -134,6 +134,17 @@ def build_trace(state: PipelineState, total_elapsed: float) -> dict[str, Any]:
     }
 
 
+def _decisions_fingerprint(decisions: list[dict]) -> str:
+    """计算决策列表的轻量指纹 (代码+方向, 用于判断两次运行是否产出相同决策)。"""
+    if not decisions:
+        return "empty"
+    parts = sorted(
+        f"{d.get('symbol','')}:{d.get('direction','buy')}:{d.get('volume',0)}"
+        for d in decisions
+    )
+    return ";".join(parts)
+
+
 def save_trace(
     state: PipelineState,
     total_elapsed: float,
@@ -141,6 +152,9 @@ def save_trace(
 ) -> str:
     """
     保存完整追踪 JSON 到文件。
+
+    同一天多次运行时, 若决策不同则自动归档旧文件为
+    trace_DATE_v{N}.json, 避免历史记录被静默覆盖。
 
     返回: 文件路径
     """
@@ -150,6 +164,35 @@ def save_trace(
     date_str = datetime.now().strftime("%Y%m%d")
     filename = f"trace_{date_str}.json"
     filepath = os.path.join(results_dir, filename)
+
+    new_fingerprint = _decisions_fingerprint(trace.get("decisions", []))
+
+    # 已有同名文件 → 对比决策是否相同
+    if os.path.isfile(filepath):
+        try:
+            with open(filepath, encoding="utf-8") as f:
+                existing = json.load(f)
+            old_fingerprint = _decisions_fingerprint(existing.get("decisions", []))
+        except (json.JSONDecodeError, OSError):
+            old_fingerprint = None
+
+        if old_fingerprint and old_fingerprint != new_fingerprint:
+            # 决策不同 → 归档旧文件, 保留新文件
+            existing_versions = [
+                int(f.split("_v")[-1].replace(".json", ""))
+                for f in os.listdir(results_dir)
+                if f.startswith(f"trace_{date_str}_v") and f.endswith(".json")
+            ]
+            next_v = max(existing_versions) + 1 if existing_versions else 2
+            archived_name = f"trace_{date_str}_v{next_v}.json"
+            archived_path = os.path.join(results_dir, archived_name)
+            os.rename(filepath, archived_path)
+            logger.info(
+                "归档旧 trace → %s (决策指纹不同: %s → %s)",
+                archived_name,
+                old_fingerprint[:60],
+                new_fingerprint[:60],
+            )
 
     with open(filepath, "w", encoding="utf-8") as f:
         json.dump(trace, f, ensure_ascii=False, indent=2)

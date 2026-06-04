@@ -200,6 +200,22 @@ def main(demo: bool = False) -> None:
             _daily = getattr(state, "daily_data", {})
             all_decisions = _final.decisions if _final else []
 
+            # 补拉持仓中不在候选池内的股票行情 (避免持仓价格过时)
+            _missing_holding_codes = [
+                code for code in tracker.positions
+                if code not in _daily
+            ]
+            if _missing_holding_codes:
+                from src.data.interface import UnifiedDataInterface as _DataIface
+                _extra = _DataIface().batch_daily_data(_missing_holding_codes, days=5)
+                _merged = 0
+                for code, records in _extra.items():
+                    if records:
+                        _daily[code] = records
+                        _merged += 1
+                logger.info("补拉持仓行情: %d/%d 只持仓不在候选池中，已补充",
+                            _merged, len(_missing_holding_codes))
+
             # 分离买卖决策: 先卖后买 (释放现金给买入用)
             sell_decisions = [d for d in all_decisions if getattr(d, "direction", "buy") == "sell"]
             buy_decisions = [d for d in all_decisions if getattr(d, "direction", "buy") == "buy"]
@@ -221,16 +237,45 @@ def main(demo: bool = False) -> None:
                         tracker.total_market_value() / total_equity * 100 if total_equity > 0 else 0,
                         total_equity, total_return)
 
-            # 回写实际权益到 trace JSON, 使 API 看板展示正确数值
+            # 回写实际执行结果到 trace JSON (权益 + 执行明细)
             try:
                 with open(trace_path, encoding="utf-8") as f:
                     trace_data = json.load(f)
                 trace_data["total_equity"] = round(total_equity, 2)
                 trace_data["total_return"] = round(total_return, 2)
+
+                # 记录实际执行: 哪些决策被应用/跳过, 执行价格是多少
+                executed = {
+                    "timestamp": datetime.now().isoformat(),
+                    "sells_applied": [
+                        {"symbol": d.symbol, "name": d.symbol_name,
+                         "intended_volume": d.volume,
+                         "status": "executed"}
+                        for d in sell_decisions
+                    ],
+                    "buys_applied": [
+                        {"symbol": d.symbol, "name": d.symbol_name,
+                         "intended_volume": d.volume,
+                         "intended_price": getattr(d, "entry_price", 0),
+                         "status": "executed" if d.symbol in _daily else "skipped: no price data"}
+                        for d in buy_decisions
+                    ],
+                    "positions_after": {
+                        code: {
+                            "name": p.name,
+                            "shares": p.shares,
+                            "avg_cost": p.avg_cost,
+                            "last_price": p.last_price,
+                        }
+                        for code, p in tracker.positions.items()
+                    },
+                    "cash_after": tracker.cash,
+                }
+                trace_data["execution"] = executed
                 with open(trace_path, "w", encoding="utf-8") as f:
                     json.dump(trace_data, f, ensure_ascii=False, indent=2)
             except Exception:
-                logger.debug("回写权益到 trace 失败", exc_info=True)
+                logger.debug("回写执行结果到 trace 失败", exc_info=True)
 
             # ── 持仓复盘 (盘后审查) ──
             review_result = None
