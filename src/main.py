@@ -216,6 +216,43 @@ def main(demo: bool = False) -> None:
                 logger.info("补拉持仓行情: %d/%d 只持仓不在候选池中，已补充",
                             _merged, len(_missing_holding_codes))
 
+            # 候选池外持仓健康检查: 对未进入筛选池的持仓, 按规则生成卖出决策
+            _candidate_codes = {c.code for c in getattr(state, "candidates", [])}
+            for _code, _pos in tracker.positions.items():
+                if _code in _candidate_codes:
+                    continue  # 已进入管线分析, 由 pipeline 自行决策
+                _price = tracker._get_price(_code, _daily)
+                if _price <= 0:
+                    continue
+                _pnl_pct = (_price - _pos.avg_cost) / _pos.avg_cost * 100
+                _entry = datetime.strptime(str(_pos.entry_date), "%Y%m%d")
+                _days = (datetime.now() - _entry).days
+
+                _should_sell = False
+                _reason = ""
+                if _pnl_pct <= config.open_loss_filter_pct:
+                    _should_sell = True
+                    _reason = f"浮亏 {_pnl_pct:.1f}% >= {abs(config.open_loss_filter_pct)}% 阈值"
+                elif _days > config.holding_clear_days and _pnl_pct <= config.holding_clear_return * 100:
+                    _should_sell = True
+                    _reason = f"持有 {_days}d > {config.holding_clear_days}d 且收益 {_pnl_pct:.1f}% <= {config.holding_clear_return*100:.0f}%"
+
+                if _should_sell:
+                    from src.agents.models import FinalDecision as _FD
+                    sell_d = _FD(
+                        symbol=_code,
+                        symbol_name=_pos.name,
+                        volume=_pos.shares,
+                        direction="sell",
+                        entry_price=_price,
+                        asset_type=_pos.asset_type,
+                    )
+                    all_decisions.append(sell_d)
+                    logger.info(
+                        "候选池外清仓: %s(%s) %d股 @¥%.2f — %s",
+                        _pos.name, _code, _pos.shares, _price, _reason,
+                    )
+
             # 分离买卖决策: 先卖后买 (释放现金给买入用)
             sell_decisions = [d for d in all_decisions if getattr(d, "direction", "buy") == "sell"]
             buy_decisions = [d for d in all_decisions if getattr(d, "direction", "buy") == "buy"]
