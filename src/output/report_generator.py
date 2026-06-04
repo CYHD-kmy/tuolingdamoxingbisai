@@ -13,10 +13,11 @@ from __future__ import annotations
 from datetime import datetime
 
 
-def generate_daily_report(state: PipelineState, tracker=None) -> str:
+def generate_daily_report(state: PipelineState, tracker=None, review_result=None) -> str:
     """基于流水线状态生成完整的 Markdown 日报。
 
     tracker: 可选的 PortfolioTracker 实例，用于持仓快照和累计收益
+    review_result: 可选的 ReviewResult 实例，用于持仓复盘章节
     """
     today = datetime.now().strftime("%Y-%m-%d")
 
@@ -68,6 +69,10 @@ def generate_daily_report(state: PipelineState, tracker=None) -> str:
 
     # ── 4. 明日关注 ──
     lines.extend(_section_watchlist(verdicts, final_result))
+
+    # ── 4.5 持仓复盘 ──
+    if review_result:
+        lines.extend(_section_review(review_result))
 
     # ── 5. 附录: 耗时 ──
     lines.extend(_section_elapsed(elapsed))
@@ -289,6 +294,96 @@ def _section_elapsed(elapsed) -> list[str]:
     total = sum(elapsed.values())
     lines.append(f"- **总计**: {total:.1f}s")
     lines.append("")
+    return lines
+
+
+def _section_review(review_result) -> list[str]:
+    """持仓复盘章节 — 风控红线检查 + 合理性评分 + 卖飞统计 + 绩效归因"""
+    lines = ["## 持仓复盘", ""]
+
+    # ── P0: 风控红线 ──
+    if review_result.risk_checks:
+        lines.append(f"### 风控红线 | {review_result.risk_summary}")
+        lines.append("")
+        lines.append("| 代码 | 名称 | R1仓位 | R5止损 | R6止损价 | R7持时 |")
+        lines.append("|------|------|--------|--------|----------|--------|")
+        for code, check_lines in review_result.risk_checks.items():
+            if code == "_portfolio":
+                continue
+            name = ""
+            # 从 position_scores 获取名称
+            if review_result.position_scores and code in review_result.position_scores:
+                name = review_result.position_scores[code].name
+            # 构建各规则状态
+            status_map = {rl.rule_id: rl for rl in check_lines}
+            r1 = status_map.get("R1")
+            r5 = status_map.get("R5")
+            r6 = status_map.get("R6")
+            r7 = status_map.get("R7")
+            def _icon(s: str) -> str:
+                return {"pass": "通过", "warn": "预警", "violation": "违规"}.get(s, s)
+            lines.append(
+                f"| {code} | {name} | {_icon(r1.status) if r1 else '-'} | "
+                f"{_icon(r5.status) if r5 else '-'} | "
+                f"{_icon(r6.status) if r6 else '-'} | "
+                f"{_icon(r7.status) if r7 else '-'} |"
+            )
+        # 组合级红线
+        combo = review_result.risk_checks.get("_portfolio", [])
+        if combo:
+            lines.append("")
+            for rl in combo:
+                icon = {"pass": "通过", "warn": "预警", "violation": "违规"}.get(rl.status, rl.status)
+                lines.append(f"- **{rl.rule_name}** ({rl.rule_id}): {icon} — {rl.message}")
+        lines.append("")
+
+    # ── P1: 持仓合理性评分 ──
+    if review_result.position_scores:
+        lines.append(f"### 持仓合理性评分 | {review_result.score_summary}")
+        lines.append("")
+        lines.append("| 代码 | 名称 | 综合得分 | 得分变化 | 盈亏 | 建议 | 理由 |")
+        lines.append("|------|------|----------|----------|------|------|------|")
+        for code, pr in review_result.position_scores.items():
+            score_str = f"{pr.current_score:.0f}"
+            if pr.score_change < -5:
+                score_str += f" ({pr.score_change:+.0f})"
+            elif pr.score_change > 5:
+                score_str += f" (+{pr.score_change:.0f})"
+            rec_icon = {"hold": "持有", "reduce": "减仓", "clear": "清仓"}.get(pr.recommendation, pr.recommendation)
+            lines.append(
+                f"| {code} | {pr.name} | {score_str} | {pr.score_change:+.0f} | "
+                f"{pr.pnl_pct:+.1f}% | {rec_icon} | {pr.reasoning[:60]} |"
+            )
+        lines.append("")
+
+    # ── P2: 卖飞检测 ──
+    pm = review_result.post_mortem
+    if pm and pm.total_sells > 0:
+        lines.append("### 历史卖出复盘")
+        lines.append("")
+        lines.append(f"- 共卖出 **{pm.total_sells}** 笔")
+        lines.append(f"- 卖飞 **{pm.sell_too_early}** 笔 (平均卖飞 {pm.avg_missed_gain_pct:+.1f}%)")
+        lines.append(f"- 有效止损 **{pm.correct_stops}** 笔 (平均避免损失 {pm.avg_avoided_loss_pct:+.1f}%)")
+        if pm.sell_too_early > pm.correct_stops:
+            lines.append("- 卖出倾向: 偏早 (建议放宽止损阈值或延长持有)")
+        elif pm.correct_stops > pm.sell_too_early:
+            lines.append("- 卖出倾向: 偏合理")
+        lines.append("")
+
+    # ── P3: 绩效归因 ──
+    attr = review_result.attribution
+    if attr and attr.total_return_pct != 0:
+        lines.append("### 绩效归因")
+        lines.append("")
+        lines.append(f"- 总收益: **{attr.total_return_pct:+.2f}%**")
+        lines.append(f"- 选股贡献: {attr.selection_contribution:+.2f}%")
+        lines.append(f"- 择时贡献: {attr.timing_contribution:+.2f}%")
+        if attr.selection_contribution > attr.timing_contribution:
+            lines.append("- 结论: 选股能力强于择时能力")
+        else:
+            lines.append("- 结论: 择时能力强于选股能力")
+        lines.append("")
+
     return lines
 
 

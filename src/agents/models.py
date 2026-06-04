@@ -59,6 +59,7 @@ class PositionLimit:
     volatility: float = 0.0   # 近期波动率 %
     risk_flags: list[str] = field(default_factory=list)
     asset_type: str = "stock"  # "stock" / "etf"
+    tier: str = "satellite"    # "core" / "satellite" (三级仓位分层)
 
 
 # ── 最终决策 ──────────────────────────────────

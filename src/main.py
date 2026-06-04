@@ -232,8 +232,43 @@ def main(demo: bool = False) -> None:
             except Exception:
                 logger.debug("回写权益到 trace 失败", exc_info=True)
 
-            report_md = generate_daily_report(state, tracker)
+            # ── 持仓复盘 (盘后审查) ──
+            review_result = None
             date_str = datetime.now().strftime("%Y%m%d")
+            if config.review_enabled and tracker.positions:
+                try:
+                    from src.review import PortfolioReviewer
+                    from src.data.interface import UnifiedDataInterface
+
+                    review_llm = None
+                    if config.llm_api_key:
+                        try:
+                            from src.llm.client import LLMClient
+                            review_llm = LLMClient(
+                                model=config.review_llm_model,
+                                api_key=config.llm_api_key,
+                                base_url=config.llm_base_url,
+                                temperature=0.3,
+                                max_tokens=1024,
+                            )
+                        except Exception:
+                            logger.debug("复盘 LLM 初始化失败，使用确定性研判")
+
+                    _regime = getattr(state, "market_regime", "neutral")
+                    reviewer = PortfolioReviewer(
+                        tracker, UnifiedDataInterface(), review_llm,
+                        market_regime=_regime,
+                    )
+                    review_result = reviewer.review()
+                    review_path = os.path.join(config.results_dir, f"review_{date_str}.json")
+                    with open(review_path, "w", encoding="utf-8") as f:
+                        json.dump(review_result.to_dict(), f, ensure_ascii=False, indent=2)
+                    logger.info("持仓复盘已保存: %s (风控: %s)",
+                                os.path.basename(review_path), review_result.risk_summary)
+                except Exception:
+                    logger.exception("持仓复盘失败")
+
+            report_md = generate_daily_report(state, tracker, review_result)
             report_path = os.path.join(config.results_dir, f"report_{date_str}.md")
             with open(report_path, "w", encoding="utf-8") as f:
                 f.write(report_md)

@@ -44,23 +44,49 @@ class RiskManager:
         unlock_shares: dict[str, float] | None = None,
         rl_signals: dict[str, tuple[str, float]] | None = None,
         market_regime: str = "neutral",
+        stock_infos: dict[str, dict] | None = None,
     ) -> dict[str, PositionLimit]:
         """
-        为每个候选股计算仓位上限。
+        为每个候选股计算仓位上限 (支持三级仓位分层)。
 
         verdicts: 研究主管的研判结论
         daily_data: {code: [StockDaily, ...]} 用于计算波动率
         current_positions: 当前持仓 {code: shares}
         industry_map: {code: industry_name} 可选，用于行业集中度
         unlock_shares: {code: unlock_ratio_pct} 可选，近期限售解禁占比
+        stock_infos: {code: {pe, total_mv, ...}} 可选，用于分层分类
 
         返回: {code: PositionLimit}
         """
+        from ...review.risk_checker import classify_tier
+
         limits: dict[str, PositionLimit] = {}
 
+        # 熊市强制空仓
+        if market_regime == "bear":
+            for v in verdicts:
+                limits[v.code] = PositionLimit(
+                    code=v.code, name=v.name,
+                    max_position_pct=0, max_shares=0, max_value=0,
+                    volatility=0, risk_flags=["熊市: 强制空仓"],
+                )
+            return limits
+
+        stock_infos = stock_infos or {}
+
         for v in verdicts:
-            # 1. 基础仓位比例
-            base_pct = self._cfg.max_single_position
+            # 1. 分层基础仓位: 核心 vs 卫星
+            info = stock_infos.get(v.code, {})
+            tier = classify_tier(
+                code=v.code,
+                composite_score=v.confidence * 100,  # 置信度×100 作为得分的近似
+                pe=info.get("pe", 0),
+                market_cap=info.get("total_mv", 0),
+            )
+            if tier == "core":
+                base_pct = self._cfg.core_single_pct  # 40%
+            else:
+                base_pct = self._cfg.satellite_single_pct  # 14%
 
             # 2. 波动率调整
             volatility = self._calc_volatility(v.code, daily_data)
@@ -106,7 +132,7 @@ class RiskManager:
             }.get(market_regime, 1.0)
             final_pct *= regime_mult
 
-            final_pct = min(final_pct, self._cfg.max_single_position)  # 硬上限 20%
+            final_pct = min(final_pct, base_pct)  # 分层硬上限
 
             # 行业集中度检查
             risk_flags = []
@@ -169,6 +195,7 @@ class RiskManager:
                 max_value=round(max_value, 2),
                 volatility=volatility,
                 risk_flags=risk_flags,
+                tier=tier,
             )
 
         # 6. 风险平价优化 (可选，覆盖等权分配)

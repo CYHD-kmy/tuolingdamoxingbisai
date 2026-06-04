@@ -71,11 +71,37 @@ class Config:
 
     # ── 风控参数 ──────────────────────────────
     initial_capital: float = 500_000.0      # 初始虚拟资金 50万
-    max_single_position: float = 0.20       # 单票 ≤ 20%
+
+    # 三级仓位分层 (核心重仓 / 卫星分散 / 现金备用)
+    core_total_pct: float = 0.40            # 核心仓总占比 ≤ 40% (20万)
+    core_single_pct: float = 0.40           # 核心单票上限 ≤ 40% (20万, 最多1-2只)
+    satellite_total_pct: float = 0.35       # 卫星仓总占比 ≤ 35% (17.5万)
+    satellite_single_pct: float = 0.14      # 卫星单票上限 ≤ 14% (7万, 3-4只)
+    min_cash_reserve: float = 0.25          # 现金备⽤ ≥ 25% (12.5万)
+
+    # 核心/卫星分类阈值
+    core_score_threshold: float = 75.0      # 综合得分 ≥ 75 可进入核心仓
+    core_pe_max: float = 30.0               # 核心仓 PE ≤ 30 (低估值龙头)
+    core_market_cap_min: float = 100e8      # 核心仓 市值 ≥ 100亿
+
+    # 市场环境自适应 — 总仓位上限
+    max_total_position_bull: float = 0.75   # 牛市: 核心40% + 卫星35%
+    max_total_position_neutral: float = 0.34  # 震荡: 核心20% + 卫星14%
+    max_total_position_bear: float = 0.0    # 熊市: 强制空仓
+
     max_industry_exposure: float = 0.40     # 同行业 ≤ 40%
     max_daily_turnover: float = 0.50        # 日换手率 ≤ 50%
     max_drawdown_daily: float = 0.05        # 日内熔断线 5%
-    min_cash_reserve: float = 0.10          # 保留 ≥ 10% 现金
+
+    # 单日风控
+    open_loss_filter_pct: float = -5.0      # 开盘跌幅超过此值则剔除 (默认-5%)
+    broad_decline_threshold: int = 3000     # 全市场下跌超N只 → 强制空仓
+
+    # 兼容旧参数 (deprecated, 使用 core_single_pct 替代)
+    @property
+    def max_single_position(self) -> float:
+        """向后兼容: 返回核心单票上限 (新代码请使用 core_single_pct / satellite_single_pct)"""
+        return self.core_single_pct
 
     # ── LLM ────────────────────────────────────
     llm_quick: str = field(
@@ -156,8 +182,8 @@ class Config:
 
     # ── 市场环境 ──────────────────────────────
     regime_lookback_days: int = 20          # 市场环境判定回看天数
-    regime_bull_mult: float = 1.25          # 牛市仓位倍率
-    regime_bear_mult: float = 0.65          # 熊市仓位倍率
+    regime_bull_mult: float = 1.00          # 牛市仓位倍率 (1.0=全量, 核心40%+卫星35%)
+    regime_bear_mult: float = 0.0           # 熊市仓位倍率 (0.0=强制空仓)
     regime_index_code: str = "000300"       # 市场环境判定基准指数 (沪深300)
 
     # ── ETF ──────────────────────────────────────
@@ -167,6 +193,15 @@ class Config:
     etf_min_daily_amount: float = 50_000_000   # ETF 最小日均成交额
     etf_min_fund_size: float = 100_000_000     # ETF 最小基金规模
     etf_max_single_position: float = 0.10  # 单只 ETF 最大仓位
+
+    # ── 持仓复盘 ──────────────────────────────
+    review_enabled: bool = field(
+        default_factory=lambda: _env_bool("REVIEW_ENABLED", True)
+    )
+    review_llm_model: str = field(
+        default_factory=lambda: os.getenv("REVIEW_LLM_MODEL", "deepseek-chat")
+    )
+    review_post_mortem_days: int = 5     # 事后验证回溯天数
 
     # ── 输出 ────────────────────────────────────
     results_dir: str = field(
@@ -180,10 +215,11 @@ class Config:
         _log = logging.getLogger(__name__)
 
         checks: list[tuple[float, float, float, str]] = [
-            (self.max_single_position, 0.01, 0.50, "max_single_position"),
+            (self.core_single_pct, 0.05, 0.50, "core_single_pct"),
+            (self.satellite_single_pct, 0.01, 0.25, "satellite_single_pct"),
             (self.max_industry_exposure, 0.05, 1.00, "max_industry_exposure"),
             (self.max_drawdown_daily, 0.01, 0.20, "max_drawdown_daily"),
-            (self.min_cash_reserve, 0.0, 0.50, "min_cash_reserve"),
+            (self.min_cash_reserve, 0.05, 0.50, "min_cash_reserve"),
             (self.request_timeout, 3, 120, "request_timeout"),
             (self.max_retries, 0, 10, "max_retries"),
         ]

@@ -14,10 +14,10 @@ FastAPI 看板服务 — 多页面常驻网站。
     /history    历史记录 (所有运行记录)
     /report     日报 (Markdown 渲染)
 
-API (10 个端点):
+API (11 个端点):
     /api/health /api/holdings /api/status /api/decisions
     /api/candidates /api/analysis /api/risk /api/report
-    /api/history /api/trace
+    /api/history /api/trace /api/review
 """
 
 from __future__ import annotations
@@ -369,6 +369,31 @@ async def api_trace(date: str | None = None):
     if not trace:
         raise HTTPException(status_code=404, detail="无数据")
     return trace
+
+
+@app.get("/api/review")
+async def api_review(date: str | None = None):
+    """持仓复盘结果 (P0风控红线 + P1合理性评分 + P2卖飞检测 + P3绩效归因)"""
+    if date:
+        if not _valid_date(date):
+            raise HTTPException(status_code=400, detail="日期格式错误，需为 YYYYMMDD")
+        path = os.path.join(RESULTS_DIR, f"review_{date}.json")
+        if os.path.isfile(path):
+            with open(path, encoding="utf-8") as f:
+                return json.load(f)
+        return {"date": date, "available": False, "message": "该日期无复盘数据"}
+    # 返回最新复盘结果
+    if not os.path.isdir(RESULTS_DIR):
+        return {"date": None, "available": False, "message": "暂无复盘数据"}
+    files = sorted(
+        [f for f in os.listdir(RESULTS_DIR)
+         if f.startswith("review_") and f.endswith(".json")],
+        reverse=True,
+    )
+    if not files:
+        return {"date": None, "available": False, "message": "暂无复盘数据，请先运行流水线"}
+    with open(os.path.join(RESULTS_DIR, files[0]), encoding="utf-8") as f:
+        return json.load(f)
 
 
 # ── 启动入口 ─────────────────────────────────────

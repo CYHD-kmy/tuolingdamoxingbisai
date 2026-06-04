@@ -8,10 +8,10 @@
 
 | 原则 | 说明 |
 |------|------|
-| **博采众长** | 最大化复用 TradingAgents-CN、ai-hedge-fund、daily_stock_analysis 的成熟模块 |
+| **博采众长** | 借鉴 TradingAgents-CN(辩论/LLM适配)、ai-hedge-fund(风控思路)、daily_stock_analysis(因子筛选) 的成熟模式，自研 A 股三层仓位框架、10条风控红线、持仓复盘等 |
 | **可解释性** | 每笔决策附带完整推理链，数据→信号→决策全链路可审计 |
 | **稳健性** | 多层数据源降级、异常熔断、空仓兜底，极端行情下不崩溃 |
-| **模块化** | 数据层 / 分析层 / 决策层 / 输出层 松耦合，各层可独立替换 |
+| **模块化** | 数据层 / 分析层 / 决策层 / 输出层 / 复盘层 松耦合，各层可独立替换 |
 
 ## 架构
 
@@ -35,6 +35,9 @@
   │
   └─ 展示层 (Web Dashboard)
       FastAPI 看板 — 首页 / 看板 / 历史 / 日报
+
+  └─ 复盘层 (Review Layer)
+      盘后持仓审计 — P0风控红线 / P1合理性评分 / P2卖飞检测 / P3绩效归因
 ```
 
 ## 快速开始
@@ -118,7 +121,8 @@ open http://localhost:8000            # 浏览器查看历史决策 (macOS)
 | 工作流 | `src/graph/` | LangGraph 状态管理 + 流水线编排 |
 | LLM 适配 | `src/llm/` | OpenAI-compatible 客户端 (DeepSeek/OpenAI)，quick/deep 分层 |
 | 输出层 | `src/output/` | JSON 格式化 + 约束校验 + Markdown 日报 + 追踪日志 |
-| Web 看板 | `src/api/` | FastAPI 多页面看板 (首页/看板/历史/日报) + 10个 API 端点 |
+| 持仓复盘 | `src/review/` | 盘后持仓审计: 10条风控红线(P0) / 合理性评分(P1) / 卖飞检测(P2) / 绩效归因(P3) |
+| Web 看板 | `src/api/` | FastAPI 多页面看板 (首页/看板/历史/日报) + 11个 API 端点 |
 | 降级策略 | `src/agents/fallback.py` | LLM 不可用时确定性规则引擎接管全链路 |
 | 持仓追踪 | `src/agents/portfolio_tracker.py` | 跨交易日持仓管理: 成本基价/浮动盈亏/行业暴露/日收益历史 |
 | 盘中监控 | `src/monitoring/` | 30s轮询: 止损(-7%)/止盈(+15%)/熔断(-5%)/Webhook告警 |
@@ -175,14 +179,34 @@ Top 20 候选池中每只股票由 4 个分析师**并行**分析（各自使用
 
 ## 风控参数
 
+### 三层仓位框架
+
+| 层级 | 单票上限 | 总仓位上限 | 说明 |
+|------|----------|------------|------|
+| 核心仓 (Core) | ≤ 40% | ≤ 40% (≤2只) | 高置信度 + 低PE + 大市值标的 |
+| 卫星仓 (Satellite) | ≤ 14% | ≤ 35% (≤4只) | 其他合格候选 |
+| 现金备用 (Cash) | — | ≥ 25% | 始终保留现金缓冲 |
+
+### 市场环境自适应
+
+| 环境 | 总仓位上限 | 触发条件 |
+|------|------------|----------|
+| 牛市 (Bull) | ≤ 75% | MA20 > MA60 + 5日趋势向上 |
+| 震荡 (Neutral) | ≤ 34% | 无明显趋势 |
+| 熊市 (Bear) | ≤ 0% (强制空仓) | MA20 < MA60 + 5日趋势向下 |
+
+### 其他风控规则
+
 | 规则 | 值 | 说明 |
 |------|-----|------|
-| 单票仓位上限 | ≤ 20% | 波动率动态调整 (低波×1.25, 高波×0.50) |
 | 行业集中度 | ≤ 40% | 同行业总仓位 |
 | 日换手率 | ≤ 50% | 避免过度交易 |
 | 日内熔断 | 5% | 回撤超 5% 暂停交易 |
-| 现金保留 | ≥ 10% | 始终保留现金缓冲 |
 | 相关性惩罚 | ×0.7 | 与已持仓高相关 (ρ>0.7) 降低仓位 |
+| 波动率调整 | 低波×1.25 / 中波×1.0 / 高波×0.5 | 波动率自适应仓位 |
+| 开盘大跌过滤 | ≤ -5% | 单日开盘跌幅 > 5% 剔除个体 |
+| 全面下跌熔断 | ≥ 3000 只下跌 | 全市场 > 3000 只下跌强制空仓 |
+| 限售解禁 | 解禁 > 5% ×0.3, > 2% ×0.6 | 近期限售解禁减仓 |
 
 ## LLM 分层策略
 
@@ -191,17 +215,22 @@ Top 20 候选池中每只股票由 4 个分析师**并行**分析（各自使用
 | quick | DeepSeek-V3.2 / GPT-4o-mini | 四维分析师、多空研究员 | 高 (每只股票 × 4) |
 | deep | DeepSeek-V4-Pro / Claude Opus | 研究主管、组合主管 | 低 (全市场 × 1) |
 
-## 技术选型与复用
+## 技术选型与演进
 
-| 模块 | 来源项目 | 复用程度 | 适配工作 |
+| 模块 | 来源/基础 | 演进程度 | 当前状态 |
 |------|----------|----------|----------|
-| 数据源适配器 | daily_stock_analysis `data_provider/` | 90% | 精简为 A 股核心数据源 |
-| 多因子筛选 | daily_stock_analysis `stock_analyzer.py` | 80% | 提取多因子打分逻辑 |
-| Agent 框架 | TradingAgents-CN `agents/` + `graph/` | 70% | 简化为4分析+2研究员+1主管 |
-| 辩论模式 | TradingAgents-CN Bull/Bear | 80% | 调整辩论轮数和提示词 |
-| LLM 适配层 | TradingAgents-CN `llm_clients/` | 95% | 直接复用 |
-| 风控模块 | ai-hedge-fund `risk_manager.py` | 60% | 从美股适配到A股规则 |
-| 组合管理 | ai-hedge-fund `portfolio_manager.py` | 50% | 修改输出格式为赛道JSON |
+| 数据源适配器 | daily_stock_analysis 模式 | 80% 复用 | 精简为 A 股核心数据源 + 缓存 + 质量标记 |
+| 多因子筛选 | daily_stock_analysis 思路 | 50% 自研 | 10因子体系 + 权重自定义 |
+| Agent 框架 | TradingAgents-CN 模式 | 60% 自研 | 4分析+2研究员+1主管 + ETF分析师 |
+| 辩论模式 | TradingAgents-CN Bull/Bear | 70% 复用 | 调整辩论轮数和提示词 |
+| LLM 适配层 | TradingAgents-CN `llm_clients/` | 90% 复用 | 直接适配 OpenAI-compatible |
+| 风控模块 | ai-hedge-fund 思路 | 90% 自研 | 三层仓位分层 + 10条红线 + 牛熊自适应 |
+| 组合管理 | ai-hedge-fund 思路 | 70% 自研 | 双向买卖 + 目标仓位 + 赛道 JSON |
+| 三层仓位框架 | 从零设计 | 100% 自研 | 核心/卫星/现金 + classify_tier 分类 |
+| 持仓复盘 | 从零设计 | 100% 自研 | P0-P3 四层事后审计 |
+| Web 看板 | 从零设计 | 100% 自研 | FastAPI 11端点 + 4功能页面 |
+| 多策略引擎 | 从零设计 | 100% 自研 | 5策略并行竞争 + 软投票 |
+| DQN / Transformer | 从零实现 | 100% 自研 | 纯Python，无PyTorch依赖 |
 
 技术栈: LangGraph (编排) / AKShare + Tushare + BaoStock (数据) / FastAPI (Web) / ChromaDB (记忆) / APScheduler (调度)
 
@@ -381,8 +410,16 @@ zhitou-future/
 │   ├── memory/                       # 向量记忆
 │   │   └── __init__.py              #   ChromaDB 历史行情索引
 │   │
+│   ├── review/                       # 持仓复盘
+│   │   ├── __init__.py                #   模块入口
+│   │   ├── engine.py                  #   复盘引擎 (编排 P0-P3)
+│   │   ├── risk_checker.py            #   P0: 10条风控红线检查 (确定性，不消耗LLM)
+│   │   ├── position_scorer.py         #   P1: 持仓合理性评分 (复用筛选因子+LLM)
+│   │   ├── post_mortem.py             #   P2: 已平仓卖飞检测
+│   │   └── attribution.py             #   P3: 绩效归因 (选股/择时/行业贡献)
+│   │
 │   ├── api/                          # Web 看板
-│   │   ├── server.py                 #   FastAPI 服务 (9 端点 + 5 页面路由)
+│   │   ├── server.py                 #   FastAPI 服务 (11 端点 + 4 功能页面)
 │   │   └── static/                   #   前端静态文件 (首页/看板/历史/日报)
 │   │
 │   ├── output/                       # 输出层
@@ -397,7 +434,9 @@ zhitou-future/
 │
 ├── results/                          # 运行结果 (自动生成)
 │   ├── trace_YYYYMMDD.json           #   推理轨迹
-│   └── report_YYYYMMDD.md            #   日报
+│   ├── report_YYYYMMDD.md            #   日报
+│   ├── review_YYYYMMDD.json          #   持仓复盘报告
+│   └── positions.json                #   持久化持仓状态
 │
 └── tests/                            # 测试 (153 tests, 13 个文件)
     ├── conftest.py                   #   pytest 配置
