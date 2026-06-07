@@ -2,7 +2,7 @@
 """
 智投未来 — 跨平台管理脚本 (Windows / macOS / Linux)
 
-Usage: python manage.py {run|run-demo|setup|schedule|schedule-stop|schedule-demo|run-scheduled}
+Usage: python manage.py {run|run-demo|setup|schedule|schedule-stop|schedule-demo|run-scheduled|web}
 """
 
 from __future__ import annotations
@@ -133,6 +133,9 @@ def cmd_intro():
     print("    1. python manage.py setup          配置API Key")
     print("    2. python manage.py run-demo       演示模式体验")
     print("    3. python manage.py run            正式运行")
+    print()
+    print("  可视化看板?")
+    print("    python manage.py web               Web仪表板")
     print()
     print("  每日自动化?")
     print("    python manage.py schedule          后台定时运行")
@@ -389,6 +392,26 @@ def cmd_schedule_demo():
     print(f"  停止: python manage.py schedule-stop")
 
 
+def cmd_web():
+    """启动 Streamlit Web 仪表板"""
+    python = _detect_python()
+    dashboard = PROJECT_DIR / "src" / "web" / "app.py"
+    if not dashboard.exists():
+        print(f"[X] 仪表板文件不存在: {dashboard}")
+        sys.exit(1)
+    print()
+    print("=" * 62)
+    print("  智投未来 — Web 仪表板")
+    print("=" * 62)
+    print(f"  浏览器打开: http://localhost:8501")
+    print(f"  停止: Ctrl+C")
+    print("=" * 62)
+    print()
+    args = [python, "-m", "streamlit", "run", str(dashboard)]
+    env = {**os.environ, "STREAMLIT_SERVER_HEADLESS": "true"}
+    subprocess.run(args, cwd=str(PROJECT_DIR), env=env)
+
+
 COMMANDS = {
     "intro": cmd_intro,
     "setup": cmd_setup,
@@ -398,6 +421,7 @@ COMMANDS = {
     "schedule": cmd_schedule,
     "schedule-stop": cmd_schedule_stop,
     "schedule-demo": cmd_schedule_demo,
+    "web": cmd_web,
 }
 
 if __name__ == "__main__":

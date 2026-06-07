@@ -212,6 +212,62 @@ class AKShareFetcher:
     _spot_cache_lock: threading.Lock = threading.Lock()
     _eastmoney_unavailable: bool = False  # 东方财富不可用时快速失败
 
+    # 代理配置 (用于国内 IP 访问东方财富 CDN)
+    _proxy: str | None = None
+    _proxy_checked: bool = False
+
+    @classmethod
+    def _get_proxy(cls) -> str | None:
+        """获取 AKShare 代理地址 (延迟加载，避免循环导入)"""
+        if not cls._proxy_checked:
+            cls._proxy_checked = True
+            from ...utils.config import get_config
+            cfg = get_config()
+            cls._proxy = cfg.akshare_proxy if cfg.akshare_proxy else None
+            if cls._proxy:
+                logger.info("akshare: 使用代理 %s", cls._proxy)
+        return cls._proxy
+
+    @staticmethod
+    def _with_proxy_context():
+        """返回 (proxy, restore_fn) 元组用于代理上下文管理。
+
+        config.py 设置了 requests.Session.trust_env=False + NO_PROXY=*,
+        这里临时恢复代理以访问国内 CDN, 调用完毕后还原。
+        """
+        import os as _os
+        import requests as _req
+        proxy = AKShareFetcher._get_proxy()
+        if not proxy:
+            return None, lambda: None
+
+        old_http = _os.environ.get("HTTP_PROXY")
+        old_https = _os.environ.get("HTTPS_PROXY")
+        old_no_proxy = _os.environ.get("NO_PROXY")
+        old_trust_env = _req.Session.trust_env
+
+        _os.environ["HTTP_PROXY"] = proxy
+        _os.environ["HTTPS_PROXY"] = proxy
+        _os.environ.pop("NO_PROXY", None)
+        _req.Session.trust_env = True
+
+        def restore():
+            _req.Session.trust_env = old_trust_env
+            if old_http is not None:
+                _os.environ["HTTP_PROXY"] = old_http
+            else:
+                _os.environ.pop("HTTP_PROXY", None)
+            if old_https is not None:
+                _os.environ["HTTPS_PROXY"] = old_https
+            else:
+                _os.environ.pop("HTTPS_PROXY", None)
+            if old_no_proxy is not None:
+                _os.environ["NO_PROXY"] = old_no_proxy
+            else:
+                _os.environ["NO_PROXY"] = "*"
+
+        return proxy, restore
+
     @classmethod
     def _warm_spot_cache(cls):
         """预热全市场快照缓存 (线程安全), 供批量操作前调用"""
@@ -223,6 +279,7 @@ class AKShareFetcher:
             if cls._spot_cache is None and now - cls._spot_cache_time <= cls._SPOT_CACHE_TTL * 2:
                 return
             try:
+                proxy, restore = cls._with_proxy_context()
                 import akshare as ak
                 cls._spot_cache = ak.stock_zh_a_spot_em()
                 cls._spot_cache_time = now
@@ -230,30 +287,36 @@ class AKShareFetcher:
             except Exception:
                 cls._spot_cache_time = now  # 记录失败时间，避免短时间内重复尝试
                 raise
+            finally:
+                restore()
 
     def _sleep(self) -> None:
         time.sleep(random.uniform(1.0, 3.0))
 
     def _retry(self, fn, *args, max_tries: int = 1, **kwargs):
-        """单次尝试 (已降级为兜底数据源, 失败即返回). AttributeError 不重试"""
+        """单次尝试 (已降级为兜底数据源, 失败即返回). 通过代理访问国内 CDN."""
         last_err = None
-        for attempt in range(max_tries):
-            try:
-                if attempt > 0:
-                    self._sleep()
-                return fn(*args, **kwargs)
-            except AttributeError:
-                raise  # 函数/属性缺失，重试无意义
-            except Exception as e:
-                last_err = e
-                if attempt >= max_tries - 1:
-                    raise
-                wait = 2 ** attempt
-                logger.warning(
-                    "akshare: %s 第%d次失败 (%.1fs后重试): %s",
-                    fn.__name__, attempt + 1, wait, e,
-                )
-                time.sleep(wait)
+        proxy, restore = self._with_proxy_context()
+        try:
+            for attempt in range(max_tries):
+                try:
+                    if attempt > 0:
+                        self._sleep()
+                    return fn(*args, **kwargs)
+                except AttributeError:
+                    raise  # 函数/属性缺失，重试无意义
+                except Exception as e:
+                    last_err = e
+                    if attempt >= max_tries - 1:
+                        raise
+                    wait = 2 ** attempt
+                    logger.warning(
+                        "akshare: %s 第%d次失败 (%.1fs后重试): %s",
+                        fn.__name__, attempt + 1, wait, e,
+                    )
+                    time.sleep(wait)
+        finally:
+            restore()
         raise last_err  # type: ignore[misc]
 
     # ── 公开 API ─────────────────────────────
@@ -647,33 +710,34 @@ class AKShareFetcher:
         return snapshots
 
     def _fetch_news(self, keyword: str, days: int) -> list[dict]:
-        """财经新闻搜索 — 优先用个股新闻接口，失败则尝试关键词搜索"""
+        """财经新闻搜索 — 个股新闻 → 关键词搜索 → 全球快讯"""
         import akshare as ak
 
         results: list[dict] = []
 
-        # 首先尝试个股新闻 (keyword 为股票代码时工作)
-        try:
-            df = ak.stock_news_em(keyword)
-            if df is not None and not df.empty:
-                for _, row in df.head(20).iterrows():
-                    results.append({
-                        "title": str(row.get("新闻标题", row.get("title", row.get("标题", "")))),
-                        "content": str(row.get("新闻内容", row.get("content", row.get("内容", ""))))[:500],
-                        "time": str(row.get("发布时间", row.get("发布日期", row.get("time", row.get("时间", ""))))),
-                        "source": str(row.get("文章来源", row.get("source", row.get("来源", "")))),
-                    })
-                if results:
-                    return results
-        except Exception:
-            pass
+        # 策略 1: 个股新闻 (keyword 为股票代码时工作)
+        if keyword.isdigit() and len(keyword) == 6:
+            try:
+                df = ak.stock_news_em(keyword)
+                if df is not None and not df.empty:
+                    for _, row in df.head(20).iterrows():
+                        results.append({
+                            "title": str(row.get("新闻标题", "")),
+                            "content": str(row.get("新闻内容", ""))[:500],
+                            "time": str(row.get("发布时间", "")),
+                            "source": str(row.get("文章来源", "")),
+                        })
+                    if results:
+                        return results
+            except Exception:
+                pass
 
-        # 备选: 使用东方财富关键词搜索 (适用于非代码关键词)
+        # 策略 2: 东方财富关键词搜索
         try:
             from urllib.parse import urlencode
             em_code = self._eastmoney_code(keyword) if keyword.isdigit() else ""
-            symbol = em_code or keyword
-            params = urlencode({"cb": "callback", "keyword": symbol, "pageindex": 1, "pagesize": 15})
+            query = em_code or keyword
+            params = urlencode({"cb": "callback", "keyword": query, "pageindex": 1, "pagesize": 15})
             url = f"https://search-api-web.eastmoney.com/search/jsonp?{params}"
             import requests as _requests
             resp = _requests.get(url, timeout=10, headers={
@@ -695,6 +759,31 @@ class AKShareFetcher:
                     })
         except Exception:
             pass
+
+        # 策略 3: 全球财经快讯 (兜底)
+        if not results:
+            try:
+                df = ak.stock_info_global_em()
+                if df is not None and not df.empty:
+                    matched = []
+                    fallback = []
+                    for _, row in df.head(30).iterrows():
+                        title = str(row.get("标题", ""))
+                        content = str(row.get("摘要", ""))
+                        entry = {
+                            "title": title,
+                            "content": content[:500],
+                            "time": str(row.get("发布时间", "")),
+                            "source": "东方财富",
+                        }
+                        if keyword and len(keyword) > 1 and (keyword in title or keyword in content):
+                            matched.append(entry)
+                        else:
+                            fallback.append(entry)
+                    # 有匹配项返回匹配项，否则兜底返回市场快讯
+                    results = matched[:15] if matched else fallback[:10]
+            except Exception:
+                pass
 
         return results
 

@@ -29,6 +29,7 @@ class AuctionSignal:
     prev_close: float             # 昨日收盘价 (元)
     auction_volume: int           # 集合竞价成交量 (股)
     avg_daily_volume_20: int      # 近20日均量 (股)
+    _volume_ratio_direct: float = 0.0  # 直接从数据源获取的量比 (替代计算)
 
     @property
     def price_deviation_pct(self) -> float:
@@ -39,11 +40,25 @@ class AuctionSignal:
 
     @property
     def volume_ratio(self) -> float:
-        """竞价量比 (竞价量/20日均量的比值放大)"""
+        """竞价量比 (优先使用直接值, 否则计算)"""
+        if self._volume_ratio_direct > 0:
+            return self._volume_ratio_direct
         if self.avg_daily_volume_20 <= 0:
             return 0.0
-        # 竞价量通常只占日成交的 5-15%，放大到占比 > 8% 为异常
         return (self.auction_volume / self.avg_daily_volume_20) * 100
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "AuctionSignal":
+        """从 tushare daily_basic 等数据源字典创建"""
+        return cls(
+            code=data.get("code", ""),
+            name=data.get("name", ""),
+            auction_price=float(data.get("open", data.get("auction_price", 0)) or 0),
+            prev_close=float(data.get("pre_close", data.get("prev_close", 0)) or 0),
+            auction_volume=int(data.get("vol", data.get("auction_volume", 0)) or 0),
+            avg_daily_volume_20=0,
+            _volume_ratio_direct=float(data.get("volume_ratio", 0) or 0),
+        )
 
     @property
     def is_gap_up(self) -> bool:
@@ -88,19 +103,21 @@ class AuctionAnalyzer:
     _PRICE_DEV_MID = 2.0               # 竞价涨幅 > 2% → 温和高开
     _PRICE_DEV_LOW = 0.5               # 竞价涨幅 > 0.5% → 小幅高开
 
-    def analyze(self, signals: list[AuctionSignal]) -> list[AuctionSignal]:
+    def analyze(
+        self, signals: list[AuctionSignal | dict]
+    ) -> list[AuctionSignal]:
         """
-        批量分析竞价信号，返回按综合评分降序排序的信号列表。
-
-        评分逻辑:
-        - 竞价量比: 大 → 多空分歧大，方向确定性高
-        - 竞价涨幅: 正且适中 (0.5%-5%) → 最优买入
-        - 量价配合: 放量高开 > 放量低开 > 缩量
+        批量分析竞价信号 (支持 dict → AuctionSignal 自动转换)，
+        返回按综合评分降序排序的信号列表。
         """
-        for s in signals:
+        converted = [
+            AuctionSignal.from_dict(s) if isinstance(s, dict) else s
+            for s in signals
+        ]
+        for s in converted:
             s._score = self._score_signal(s)
-        signals.sort(key=lambda x: getattr(x, '_score', 0), reverse=True)
-        return signals
+        converted.sort(key=lambda x: getattr(x, '_score', 0), reverse=True)
+        return converted
 
     def _score_signal(self, s: AuctionSignal) -> float:
         """单信号综合评分 0-100"""

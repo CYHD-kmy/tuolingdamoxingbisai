@@ -112,11 +112,20 @@ class MarketSentimentAnalyzer:
 
     def analyze(
         self,
-        breadth: MarketBreadth,
+        breadth: MarketBreadth | dict,
         hot_sectors: list[SectorHeat] | None = None,
         cooling_sectors: list[SectorHeat] | None = None,
     ) -> MarketSentimentResult:
         """综合市场情绪分析"""
+        if isinstance(breadth, dict):
+            breadth = MarketBreadth(
+                up_count=breadth.get("up_count", 0),
+                down_count=breadth.get("down_count", 0),
+                flat_count=breadth.get("flat_count", 0),
+                limit_up_count=breadth.get("limit_up_count", 0),
+                limit_down_count=breadth.get("limit_down_count", 0),
+                total_volume_yi=breadth.get("total_volume_yi", 0.0),
+            )
         regime, regime_score = self._classify_regime(breadth)
         participation = self._calc_participation(breadth)
         risk = self._assess_risk(breadth, regime)

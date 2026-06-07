@@ -34,6 +34,43 @@ class DragonTigerSignal:
     sell_seats: list[dict]      # 卖出席位
     explanation: str = ""       # 上榜原因 (日涨幅偏离值/连续三日等)
 
+    @classmethod
+    def from_dict(cls, data: dict) -> "DragonTigerSignal":
+        """从 tushare top_list 字典创建信号（单位转换: 万元 → 元）
+
+        top_list 字段: l_buy/l_sell/net_amount 的单位为万元
+        """
+        l_buy = float(data.get("l_buy", 0) or 0) * 1e4
+        l_sell = float(data.get("l_sell", 0) or 0) * 1e4
+        net = float(data.get("net_amount", 0) or 0) * 1e4
+
+        # 买入席位: 从 top_list 只能拿到汇总，构造单一条目
+        buy_seats = []
+        if l_buy > 0:
+            buy_seats.append({"name": "龙虎榜买入合计", "amount": l_buy, "type": "汇总"})
+
+        sell_seats = []
+        if l_sell > 0:
+            sell_seats.append({"name": "龙虎榜卖出合计", "amount": l_sell, "type": "汇总"})
+
+        # 如果提供了席位明细，覆盖
+        seats = data.get("seats")
+        if seats:
+            buy_seats = seats.get("buy", buy_seats)
+            sell_seats = seats.get("sell", sell_seats)
+
+        return cls(
+            code=data.get("code", ""),
+            name=data.get("name", ""),
+            trade_date=data.get("trade_date", ""),
+            total_buy_amount=l_buy,
+            total_sell_amount=l_sell,
+            net_amount=net,
+            buy_seats=buy_seats,
+            sell_seats=sell_seats,
+            explanation=data.get("reason", data.get("explanation", "")),
+        )
+
     @property
     def net_buy_ratio(self) -> float:
         """净买入占比 = 净买入 / 总买入"""
@@ -91,12 +128,18 @@ class DragonTigerAnalyzer:
     _NET_BUY_HIGH = 0.5    # 净买入占比 > 50%
     _NET_BUY_MID = 0.2     # 净买入占比 > 20%
 
-    def analyze(self, signals: list[DragonTigerSignal]) -> list[DragonTigerSignal]:
-        """批量分析龙虎榜信号"""
-        for s in signals:
+    def analyze(
+        self, signals: list[DragonTigerSignal | dict]
+    ) -> list[DragonTigerSignal]:
+        """批量分析龙虎榜信号 (支持 dict → DragonTigerSignal 自动转换)"""
+        converted = [
+            DragonTigerSignal.from_dict(s) if isinstance(s, dict) else s
+            for s in signals
+        ]
+        for s in converted:
             s._score = self._score_signal(s)
-        signals.sort(key=lambda x: getattr(x, '_score', 0), reverse=True)
-        return signals
+        converted.sort(key=lambda x: getattr(x, '_score', 0), reverse=True)
+        return converted
 
     def _score_signal(self, s: DragonTigerSignal) -> float:
         """龙虎榜信号评分 0-100"""

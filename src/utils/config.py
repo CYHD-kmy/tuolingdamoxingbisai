@@ -47,6 +47,14 @@ class Config:
     tushare_priority: int = 0
     baostock_priority: int = 3
 
+    # AKShare 代理 (国内 IP 访问东方财富/新浪等 CDN)
+    akshare_proxy: Optional[str] = field(
+        default_factory=lambda: os.getenv("AKSHARE_PROXY",
+                                          "http://127.0.0.1:7897")
+        if os.getenv("AKSHARE_PROXY") or os.path.exists(
+            "/Applications/Clash Verge.app") else ""
+    )
+
     cache_ttl_daily: int = 300
     cache_ttl_realtime: int = 60
     cache_ttl_fundamental: int = 3600
@@ -143,6 +151,9 @@ class Config:
     etf_min_daily_amount: float = 50_000_000
     etf_min_fund_size: float = 100_000_000
     etf_max_single_position: float = 0.10
+
+    # ── 组合管理 ────────────────────────────────
+    use_target_allocation: bool = False  # True=LLM分配权重, False=确定性规则
 
     # ── 输出 ────────────────────────────────────
     results_dir: str = field(

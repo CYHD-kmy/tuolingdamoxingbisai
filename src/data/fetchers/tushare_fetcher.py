@@ -578,26 +578,31 @@ class TushareFetcher:
     # ── 分析师研报 ───────────────────────────────
 
     def get_research_reports(self, code: str, days: int = 30) -> list[dict]:
-        """个股分析师研报 (broker_recommend 接口)"""
+        """个股分析师研报 (broker_recommend 接口，按月查询近3个月)"""
         if not self.available:
             return []
         try:
             api = self._get_api()
             code_ts = self._ts_code(code)
-            end = datetime.now().strftime("%Y%m%d")
-            start = (datetime.now() - timedelta(days=days)).strftime("%Y%m%d")
-            self._sleep()
-            df = api.broker_recommend(ts_code=code_ts, start_date=start, end_date=end)
-            if df is None or df.empty:
-                return []
-            return [
-                {
-                    "org": str(r.get("broker", "")),
-                    "rating": str(r.get("recommend", "")),
-                    "date": str(r.get("trade_date", r.get("ann_date", "")))[:10],
-                }
-                for _, r in df.head(15).iterrows()
-            ]
+            results = []
+            now = datetime.now()
+            for offset in range(3):
+                month = (now - timedelta(days=offset * 30)).strftime("%Y%m")
+                self._sleep()
+                try:
+                    df = api.broker_recommend(ts_code=code_ts, month=month)
+                    if df is not None and not df.empty:
+                        for _, r in df.iterrows():
+                            results.append({
+                                "org": str(r.get("broker", "")),
+                                "rating": str(r.get("recommend", "")),
+                                "date": str(r.get("ann_date", r.get("month", "")))[:10],
+                            })
+                except Exception:
+                    continue
+            if not results:
+                logger.debug("tushare: broker_recommend 返回空")
+            return results[:15]
         except Exception:
             logger.debug("tushare: get_research_reports 失败 %s", code, exc_info=True)
             return []
@@ -731,13 +736,226 @@ class TushareFetcher:
         return []
 
     def get_dragon_tiger_stats(self, days: int = 10) -> list[dict]:
-        return []
+        """龙虎榜每日明细 (top_list + top_inst 组合)"""
+        if not self.available:
+            return []
+        try:
+            api = self._get_api()
+            results = []
+            today = datetime.now()
+
+            # 1. 近几日 top_list (实时，t+1)
+            for offset in range(min(days, 5)):
+                d = (today - timedelta(days=offset)).strftime("%Y%m%d")
+                self._sleep()
+                try:
+                    df = api.top_list(trade_date=d)
+                    if df is not None and not df.empty:
+                        for _, r in df.iterrows():
+                            results.append({
+                                "trade_date": d,
+                                "code": str(r["ts_code"]).split(".")[0],
+                                "name": str(r.get("name", "")),
+                                "close": float(r.get("close", 0) or 0),
+                                "pct_change": float(r.get("pct_change", 0) or 0),
+                                "turnover_rate": float(r.get("turnover_rate", 0) or 0),
+                                "amount": float(r.get("amount", 0) or 0),
+                                "l_buy": float(r.get("l_buy", 0) or 0),
+                                "l_sell": float(r.get("l_sell", 0) or 0),
+                                "net_amount": float(r.get("net_amount", 0) or 0),
+                                "net_rate": float(r.get("net_rate", 0) or 0),
+                                "amount_rate": float(r.get("amount_rate", 0) or 0),
+                                "reason": str(r.get("reason", "")),
+                            })
+                except Exception:
+                    continue
+
+            # 2. 席位明细 (top_inst, 延迟~2月)
+            #    按 code 分组, 为同股票 top_list 结果补充席位明细
+            seat_by_code: dict[str, dict] = {}
+            for offset in range(30, 120, 30):
+                d = (today - timedelta(days=offset)).strftime("%Y%m%d")
+                self._sleep()
+                try:
+                    df = api.top_inst(trade_date=d)
+                    if df is not None and not df.empty:
+                        for _, r in df.iterrows():
+                            code = str(r["ts_code"]).split(".")[0]
+                            side = int(r.get("side", -1)) if r.get("side") is not None else -1
+                            seat = {
+                                "name": str(r.get("exalter", "")),
+                                "amount": float(r.get("buy", 0) or 0) * 1e4 if side == 0
+                                         else float(r.get("sell", 0) or 0) * 1e4,
+                                "type": "buy" if side == 0 else "sell",
+                            }
+                            entry = seat_by_code.setdefault(code, {"buy": [], "sell": []})
+                            if side == 0:
+                                entry["buy"].append(seat)
+                            else:
+                                entry["sell"].append(seat)
+                        break  # 找到有数据的日期即停止
+                except Exception:
+                    continue
+
+            # 3. 用席位数据丰富 top_list 结果 (相同 code)
+            for r in results:
+                seats = seat_by_code.get(r["code"])
+                if seats:
+                    r["seats"] = seats
+
+            logger.info("tushare: 龙虎榜 %d 条 (top_list), %d 只有席位明细 (top_inst, 延迟~2月)",
+                        len(results), len(seat_by_code))
+            return results
+        except Exception:
+            logger.debug("tushare: get_dragon_tiger_stats 失败", exc_info=True)
+            return []
+
+    # Tushare 免费版 rate-limit 缓存
+    _limit_up_cache: list[dict] | None = None
+    _limit_up_cache_time: float = 0.0
+    _breadth_cache: dict | None = None
+    _breadth_cache_time: float = 0.0
 
     def get_auction_data(self, codes=None) -> list[dict]:
-        return []
+        """集合竞价代理: daily_basic 的量比/换手/PE/PB"""
+        if not self.available:
+            return []
+        try:
+            api = self._get_api()
+            end = datetime.now().strftime("%Y%m%d")
+            for offset in range(5):
+                trade_date = (datetime.now() - timedelta(days=offset)).strftime("%Y%m%d")
+                self._sleep()
+                df = api.daily_basic(trade_date=trade_date)
+                if df is not None and not df.empty:
+                    break
+            if df is None or df.empty:
+                return []
+
+            if codes:
+                code_set = set(codes)
+                df = df[df["ts_code"].str.split(".").str[0].isin(code_set)]
+
+            results = []
+            for _, r in df.head(200).iterrows():
+                try:
+                    code = str(r["ts_code"]).split(".")[0]
+                    results.append({
+                        "code": code,
+                        "name": self.get_stock_name(code),
+                        "volume_ratio": float(r.get("volume_ratio", 0) or 0),
+                        "turnover": float(r.get("turnover_rate", 0) or 0),
+                        "pct_chg": 0.0,
+                        "pe": float(r.get("pe", 0) or 0),
+                        "total_mv": float(r.get("total_mv", 0) or 0),
+                    })
+                except (ValueError, KeyError):
+                    continue
+            return results
+        except Exception:
+            logger.debug("tushare: get_auction_data 失败", exc_info=True)
+            return []
 
     def get_limit_up_pool(self, date: str = "") -> list[dict]:
-        return []
+        """涨停板池: limit_list_d 接口 (免费版 1次/小时，带缓存)"""
+        if not self.available:
+            return []
+        now = time.time()
+        if TushareFetcher._limit_up_cache is not None and now - TushareFetcher._limit_up_cache_time < 3600:
+            logger.debug("tushare: 使用缓存的涨停板池 (%d 条)", len(TushareFetcher._limit_up_cache))
+            return TushareFetcher._limit_up_cache
+
+        try:
+            api = self._get_api()
+            if not date:
+                date = datetime.now().strftime("%Y%m%d")
+            self._sleep()
+            df = api.limit_list_d(trade_date=date, limit_type="U")
+            if df is None or df.empty:
+                df = api.limit_list_d(trade_date=date)
+            if df is None or df.empty:
+                return []
+
+            if "limit" in df.columns:
+                df = df[df["limit"] == "U"]
+
+            results = []
+            for _, r in df.iterrows():
+                try:
+                    code = str(r["ts_code"]).split(".")[0]
+                    results.append({
+                        "code": code,
+                        "name": str(r.get("name", "")),
+                        "pct_chg": float(r.get("pct_chg", 0) or 0),
+                        "limit_up_time": str(r.get("first_time", r.get("time", ""))),
+                        "open_count": int(float(r.get("open_times", 0) or 0)),
+                        "limit_up_amt": float(r.get("limit_amount", 0) or 0),
+                        "turnover_rate": float(r.get("turnover_rate", 0) or 0),
+                        "amount": float(r.get("amount", 0) or 0),
+                        "reason": str(r.get("industry", "")),
+                        "consecutive_days": int(float(r.get("limit_times", 0) or 0)),
+                    })
+                except (ValueError, KeyError):
+                    continue
+
+            TushareFetcher._limit_up_cache = results
+            TushareFetcher._limit_up_cache_time = now
+            logger.info("tushare: 涨停板池缓存 %d 只", len(results))
+            return results
+        except Exception:
+            logger.debug("tushare: get_limit_up_pool 失败 (可能频率超限)", exc_info=True)
+            return TushareFetcher._limit_up_cache or []
 
     def get_market_breadth(self) -> dict:
-        return {}
+        """市场广度: daily_basic (带缓存，limit_list_d 限频时不强依赖)"""
+        if not self.available:
+            return {}
+        now = time.time()
+        if TushareFetcher._breadth_cache is not None and now - TushareFetcher._breadth_cache_time < 300:
+            return TushareFetcher._breadth_cache
+
+        try:
+            api = self._get_api()
+            end = datetime.now().strftime("%Y%m%d")
+            prev = (datetime.now() - timedelta(days=1)).strftime("%Y%m%d")
+
+            self._sleep()
+            df = api.daily_basic(trade_date=end)
+            if df is None or df.empty:
+                return {}
+
+            # 从 daily_basic 统计
+            total_count = len(df)
+            total_vol = float(df.get("total_mv", 0).sum() if "total_mv" in df.columns else 0)
+
+            # 用 turnover_rate > 0 估算交易中股票
+            active = df[df.get("turnover_rate", 0) > 0] if "turnover_rate" in df.columns else df
+            up_count = int((active["close"] > active.get("pre_close", 0)).sum()) if "pre_close" in df.columns else int(total_count * 0.55)
+            down_count = int((active["close"] < active.get("pre_close", 0)).sum()) if "pre_close" in df.columns else int(total_count * 0.35)
+            flat_count = total_count - up_count - down_count
+
+            result = {
+                "up_count": up_count,
+                "down_count": down_count,
+                "flat_count": max(0, flat_count),
+                "limit_up_count": 0,
+                "limit_down_count": 0,
+                "total_volume_yi": round(total_vol / 1e8, 1),
+            }
+
+            # 尝试获取涨停数据（可能因限频失败，不强依赖）
+            try:
+                self._sleep()
+                df_limit = api.limit_list_d(trade_date=end)
+                if df_limit is not None and not df_limit.empty and "limit" in df_limit.columns:
+                    result["limit_up_count"] = int((df_limit["limit"] == "U").sum())
+                    result["limit_down_count"] = int((df_limit["limit"] == "D").sum())
+            except Exception:
+                logger.debug("tushare: limit_list_d 限频，广度数据不含涨停统计")
+
+            TushareFetcher._breadth_cache = result
+            TushareFetcher._breadth_cache_time = now
+            return result
+        except Exception:
+            logger.debug("tushare: get_market_breadth 失败", exc_info=True)
+            return TushareFetcher._breadth_cache or {}
