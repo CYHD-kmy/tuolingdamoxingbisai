@@ -941,6 +941,204 @@ def render_system_info(data: dict):
 
 
 # ═══════════════════════════════════════════════
+#  AI 对话
+# ═══════════════════════════════════════════════
+
+SYSTEM_PROMPT = """你是「智投未来」的AI投资助手，一个面向A股日内投资的智能体系统。
+
+## 你的能力
+你可以回答用户关于以下方面的问题：
+- 当前分析的股票及其研判结论（看多/看空/观望）
+- 投资策略解读（多因子筛选、六维分析师、多空辩论等流程）
+- 市场行情与数据分析
+- 风控体系与仓位管理逻辑
+- 具体的投资建议和风险提示
+
+## 回答原则
+1. 如果有当前数据上下文，优先基于数据回答，引用具体的置信度、目标价、风险等级等
+2. 投资建议需附带风险提示，不要给出绝对化的买卖建议
+3. 回答简洁、有条理，适当使用分点
+4. 如果用户问的是系统功能问题，请介绍本系统的核心流程和优势
+5. 始终保持专业、理性的语气
+
+## 免责声明
+所有回答仅供参考和学习交流，不构成实际投资建议。投资有风险，入市需谨慎。"""
+
+
+def _build_chat_context(data: dict) -> str:
+    """从当前数据构建对话上下文"""
+    parts = []
+
+    candidates = _get_candidates(data)
+    verdicts = _get_verdicts(data)
+    decisions = _get_decisions(data)
+    portfolio = _get_portfolio(data)
+
+    if candidates:
+        parts.append(f"## 当前候选池 ({len(candidates)}只)")
+        for c in sorted(candidates, key=lambda x: x.get("score", 0), reverse=True)[:5]:
+            parts.append(f"- {c.get('code','')} {c.get('name','')} 综合分:{c.get('score',0):.0f}")
+
+    if verdicts:
+        parts.append(f"\n## 研究主管研判")
+        for code, v in verdicts.items():
+            d = v.get("direction", "hold")
+            dir_cn = {"buy": "买入", "hold": "观望", "sell": "卖出"}.get(d, d)
+            parts.append(
+                f"- {code} {v.get('name','')}: **{dir_cn}** "
+                f"(置信度:{v.get('confidence',0):.0%}, 目标价:¥{v.get('target_price',0):.2f}, "
+                f"风险:{v.get('risk_level','low')})"
+            )
+            if v.get("core_reasoning"):
+                parts.append(f"  逻辑: {v['core_reasoning'][:120]}")
+            if v.get("key_risks"):
+                parts.append(f"  风险: {', '.join(v['key_risks'][:3])}")
+
+    if decisions:
+        buy_decisions = [d for d in decisions if d.get("direction", "buy") == "buy"]
+        if buy_decisions:
+            parts.append(f"\n## 最终买入决策 ({len(buy_decisions)}笔)")
+            for d in buy_decisions:
+                parts.append(f"- {d.get('symbol','')} {d.get('symbol_name','')} {d.get('volume',0)}股 @ ¥{d.get('entry_price',0):.2f}")
+            parts.append(f"资金使用: ¥{portfolio.get('cash_used',0):,.0f} / ¥{_d(data, 'total_capital', 0):,.0f}")
+        else:
+            parts.append("\n## 最终决策: 空仓 ([])，今日无符合条件的买入标的")
+
+    elapsed = _get_elapsed(data)
+    if elapsed:
+        total = sum(elapsed.values())
+        parts.append(f"\n## 运行信息: 总耗时{total:.0f}s, 日期{_d(data, 'date', '-')}")
+
+    return "\n".join(parts)
+
+
+def render_chat(data: dict):
+    """AI 对话助手"""
+    st.subheader("💬 AI 投资助手")
+
+    # 初始化 chat history
+    if "chat_messages" not in st.session_state:
+        st.session_state.chat_messages = []
+    if "chat_context" not in st.session_state:
+        st.session_state.chat_context = _build_chat_context(data)
+
+    # 快捷提问
+    st.caption("快捷提问:")
+    cols = st.columns(4)
+    quick_prompts = {
+        "今天推荐什么？": "基于当前分析数据，今天推荐买入哪些股票？为什么？",
+        "风控怎么样？": "当前的风控约束和仓位管理方案是怎样的？",
+        "解释一下流程": "请介绍智投未来系统的核心分析流程和优势。",
+        "风险最大的标的": "当前候选池中风险最大的标的是什么？具体风险有哪些？",
+    }
+    triggered = None
+    for i, (label, full) in enumerate(quick_prompts.items()):
+        with cols[i]:
+            if st.button(label, key=f"quick_{i}", use_container_width=True):
+                triggered = full
+
+    st.divider()
+
+    # 渲染历史消息
+    for msg in st.session_state.chat_messages:
+        with st.chat_message(msg["role"]):
+            st.markdown(msg["content"])
+
+    # 处理输入
+    if triggered:
+        user_input = triggered
+    else:
+        user_input = st.chat_input("向AI助手提问...", key="chat_input")
+
+    if user_input:
+        # 添加用户消息
+        st.session_state.chat_messages.append({"role": "user", "content": user_input})
+        with st.chat_message("user"):
+            st.markdown(user_input)
+
+        # 调用 LLM
+        with st.chat_message("assistant"):
+            with st.spinner("AI正在思考..."):
+                response = _call_chat_llm(
+                    user_input,
+                    st.session_state.chat_messages,
+                    st.session_state.chat_context,
+                )
+            st.markdown(response)
+            st.session_state.chat_messages.append({"role": "assistant", "content": response})
+
+    # 清除对话按钮
+    if st.session_state.chat_messages:
+        st.divider()
+        if st.button("🗑️ 清除对话", key="clear_chat"):
+            st.session_state.chat_messages = []
+            st.rerun()
+
+
+def _call_chat_llm(
+    user_input: str,
+    history: list[dict],
+    context: str,
+) -> str:
+    """调用 DeepSeek API 进行对话"""
+    try:
+        import os as _os
+        import json as _json
+        from urllib import request, error as urllib_error
+
+        api_key = _os.getenv("LLM_API_KEY", "").strip()
+        base_url = _os.getenv("LLM_BASE_URL", "https://api.deepseek.com").strip().rstrip("/")
+
+        if not api_key:
+            return (
+                "⚠️ 未检测到 LLM API Key 配置。\n\n"
+                "请运行 `python manage.py setup` 配置 DeepSeek API Key，"
+                "或创建 `.env` 文件设置 `LLM_API_KEY=你的Key`。\n\n"
+                "如果暂时没有 API Key，可以使用演示模式体验系统功能。"
+            )
+
+        # 构建消息
+        messages = [{"role": "system", "content": SYSTEM_PROMPT + "\n\n" + context}]
+
+        # 添加最近10轮历史(避免token过长)
+        recent = history[-10:] if len(history) > 10 else history
+        messages.extend(recent)
+
+        body = _json.dumps({
+            "model": _os.getenv("LLM_QUICK_MODEL", "deepseek-chat"),
+            "messages": messages,
+            "temperature": 0.7,
+            "max_tokens": 2048,
+        }).encode("utf-8")
+
+        req = request.Request(
+            f"{base_url}/chat/completions",
+            data=body,
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {api_key}",
+            },
+        )
+
+        resp = request.urlopen(req, timeout=30)
+        data = _json.loads(resp.read().decode("utf-8"))
+        return data["choices"][0]["message"]["content"]
+
+    except urllib_error.HTTPError as e:
+        err_body = e.read().decode("utf-8", errors="replace")[:500]
+        if e.code == 401:
+            return f"⚠️ API Key 无效或已过期，请运行 `python manage.py setup` 重新配置。"
+        elif e.code == 429:
+            return f"⚠️ API 请求频率过高，请稍后再试。"
+        return f"⚠️ API 调用失败 (HTTP {e.code}): {err_body}"
+    except Exception as e:
+        msg = str(e)
+        if "timed out" in msg.lower() or "timeout" in msg.lower():
+            return f"⚠️ API 请求超时，请稍后重试。"
+        return f"⚠️ 对话服务暂时不可用: {msg[:200]}\n\n可以切换到演示模式使用仪表板功能。"
+
+
+# ═══════════════════════════════════════════════
 #  主入口
 # ═══════════════════════════════════════════════
 
@@ -1046,6 +1244,7 @@ def main():
         "💰 组合持仓",
         "📈 技术数据",
         "ℹ️ 系统信息",
+        "💬 AI对话",
     ])
 
     with tabs[0]:
@@ -1066,6 +1265,8 @@ def main():
         render_technical(data)
     with tabs[8]:
         render_system_info(data)
+    with tabs[9]:
+        render_chat(data)
 
 
 if __name__ == "__main__":
