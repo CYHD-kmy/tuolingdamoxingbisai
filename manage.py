@@ -394,6 +394,7 @@ def cmd_schedule_demo():
 
 def cmd_web():
     """启动 Streamlit Web 仪表板"""
+    _load_env()
     python = _detect_python()
     dashboard = PROJECT_DIR / "src" / "web" / "app.py"
     if not dashboard.exists():

@@ -919,7 +919,7 @@ def render_system_info(data: dict):
         c3, c4, c5 = st.columns(3)
         with c3:
             st.caption(f"初始资金: ¥{cfg.initial_capital:,.0f}")
-            st.caption(f"风控: 核心{cfg.core_single_pct:.0%} / 卫星{satellite_single_pct:.0%}" if hasattr(cfg, 'satellite_single_pct') else "")
+            st.caption(f"风控: 核心{cfg.core_single_pct:.0%} / 卫星{cfg.satellite_single_pct:.0%}")
             st.caption(f"最低现金: {cfg.min_cash_reserve:.0%}")
         with c4:
             st.caption(f"最大候选: {cfg.max_candidates}")
@@ -1088,6 +1088,25 @@ def _call_chat_llm(
 
         api_key = _os.getenv("LLM_API_KEY", "").strip()
         base_url = _os.getenv("LLM_BASE_URL", "https://api.deepseek.com").strip().rstrip("/")
+
+        # 如果 env vars 未加载 (直接 streamlit run 而非 manage.py web), 尝试 fallback 加载 .env
+        if not api_key:
+            env_file = PROJECT_DIR / ".env"
+            if env_file.exists():
+                with open(env_file, encoding="utf-8") as _f:
+                    for _raw in _f:
+                        _line = _raw.strip()
+                        if not _line or _line.startswith("#") or "=" not in _line:
+                            continue
+                        _k, _, _v = _line.partition("=")
+                        _k, _v = _k.strip(), _v.strip()
+                        if _v and _v[0] in ('"', "'"):
+                            _v = _v[1:].rstrip(_v[0])
+                        elif "#" in _v:
+                            _v = _v.split("#")[0].strip()
+                        _os.environ.setdefault(_k, _v)
+                api_key = _os.getenv("LLM_API_KEY", "").strip()
+                base_url = _os.getenv("LLM_BASE_URL", base_url).rstrip("/")
 
         if not api_key:
             return (

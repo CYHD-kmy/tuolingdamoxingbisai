@@ -404,7 +404,7 @@ class AKShareFetcher:
     @staticmethod
     def _normalize_code(code: str) -> str:
         """标准化股票代码: 去除 sh/sz 前缀, 返回纯数字"""
-        code = code.replace("sh", "").replace("sz", "").replace("SH", "").replace("SZ", "")
+        code = code.replace("sh", "").replace("sz", "").replace("SH", "").replace("SZ", "").replace("bj", "").replace("BJ", "")
         return code.strip()
 
     @staticmethod

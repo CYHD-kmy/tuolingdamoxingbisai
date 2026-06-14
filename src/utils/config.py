@@ -125,7 +125,6 @@ class Config:
 
     # 市场情绪分析
     enable_market_sentiment: bool = True
-    broad_decline_threshold: int = 3000
     broad_advance_threshold: int = 3000
 
     # 集合竞价
